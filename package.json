@@ -14,7 +14,12 @@
     "wayland",
     "gnome",
     "at-spi",
-    "uinput"
+    "uinput",
+    "ubuntu",
+    "ubuntu-24-04",
+    "linux-desktop",
+    "screenshot",
+    "accessibility"
   ],
   "exports": {
     ".": "./index.js",
