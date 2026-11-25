@@ -1,13 +1,13 @@
 # Changelog
 
-## Unreleased
+## 0.1.1 - 2026-11-25
 
 - fix: send the complete `input_absinfo` when creating the absolute pointer.
   libinput rejected the device with "kernel bug: kernel has only x or y
   resolution, not both" and silently dropped every motion and button event, so
   clicks did nothing while the keyboard and the wheel kept working.
 
-## Unreleased
+## 0.1.1 - 2026-11-25
 
 - `desktop_status` gained `reset_input`, which recreates the virtual keyboard,
   pointer and wheel devices. The compositor can stop honouring devices that
