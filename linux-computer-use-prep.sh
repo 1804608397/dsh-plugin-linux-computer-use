@@ -260,7 +260,9 @@ c_ok "server home: $SHARE_DIR"
 say "Done"
 cat <<EOF
 Next steps:
-  1. LOG OUT and LOG BACK IN (or reboot) so the 'input' group takes effect.
+  1. Restart the DSH host (dsh web) so the MCP bridge picks this up.
+     Logging out is NOT required: the launcher re-execs through 'sg input',
+     so it works even if the host process still has the old group list.
   2. Run:  $0 --verify
   3. Tell the DSH agent it is done; it will verify and switch the plugin on.
 

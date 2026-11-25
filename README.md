@@ -33,7 +33,7 @@ dsh plugin --profile web add dsh-plugin-linux-computer-use
 sudo ./linux-computer-use-prep.sh
 sudo ./linux-computer-use-prep.sh --verify   # 不需要 sudo
 
-# 3. 注销并重新登录（input 组只对新会话生效），然后重启 dsh
+# 3. 重启 dsh（注销重登不是必需，见下方说明）
 ```
 
 准备脚本做四件事：
