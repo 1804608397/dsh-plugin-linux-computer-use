@@ -1,5 +1,9 @@
 # dsh-plugin-linux-computer-use
 
+[![npm](https://img.shields.io/npm/v/dsh-plugin-linux-computer-use.svg)](https://www.npmjs.com/package/dsh-plugin-linux-computer-use)
+[![GitHub release](https://img.shields.io/github/v/release/1804608397/dsh-plugin-linux-computer-use.svg)](https://github.com/1804608397/dsh-plugin-linux-computer-use/releases)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
 **Computer Use for Ubuntu / GNOME Wayland, bridged into DeepSeek Harness as MCP tools.**
 
 给 DeepSeek Harness 装上"手和眼睛"：截屏、UI 树、鼠标键盘、剪贴板、进程、系统设置，全部以 `mcp__linux__*` 工具暴露给模型；外带一个 `linux_mcp_doctor` 诊断工具。**默认关闭**，在插件面板里手动打开。
