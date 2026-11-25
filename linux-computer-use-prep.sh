@@ -36,6 +36,7 @@ SHARE_DIR="$TARGET_HOME/.local/share/dsh-linux-computer-use"
 c_ok()   { printf '  \033[32mOK\033[0m   %s\n' "$*"; }
 c_warn() { printf '  \033[33mWARN\033[0m %s\n' "$*"; }
 c_bad()  { printf '  \033[31mMISS\033[0m %s\n' "$*"; }
+c_note() { printf '  \033[2mnote\033[0m %s\n' "$*"; }
 say()    { printf '\n\033[1m== %s ==\033[0m\n' "$*"; }
 
 require_root() {
@@ -214,7 +215,8 @@ EOF
     ls -l "$SOCKET_PATH" | sed 's/^/       /'
   fi
 else
-  c_warn "ydotoold not installed; skipping the fallback unit"
+  c_note "no ydotoold binary in this distro's ydotool package - skipping the"
+  c_note "fallback unit. The primary path (/dev/uinput) does not need it."
 fi
 
 # 6. MCP launcher (fixed path the cordis patch can reference) ---------------

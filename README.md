@@ -40,8 +40,10 @@ sudo ./linux-computer-use-prep.sh --verify   # 不需要 sudo
 
 1. `/dev/uinput` → `input` 组、0660，并持久化成 udev 规则；
 2. 把当前用户加进 `input` 组；
-3. 装 `wl-clipboard`（必需）和 `ydotool`（可选兜底）；
+3. 装 `wl-clipboard`（必需）和 `ydotool`（可选兜底；Ubuntu 24.04 的 ydotool 包里没有 `ydotoold` 守护进程，所以兜底路径默认不可用——主路径 `/dev/uinput` 不依赖它）；
 4. 装一个固定路径启动器 `/usr/local/bin/dsh-linux-desktop-mcp`。
+
+改完组之后**必须注销重登**，并且**重启启动服务器的那个进程**（比如 `dsh web`）：长驻进程保留它启动时的组列表，光重登不重启仍然是 `operation not permitted`。
 
 ## 打开
 
