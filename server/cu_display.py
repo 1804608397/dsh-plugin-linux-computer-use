@@ -210,26 +210,31 @@ def _request_path(connection: Gio.DBusConnection, handle_token: str) -> str:
     return f"{PORTAL_PATH}/request/{sender}/{handle_token}"
 
 
+def _options_token(parameters: GLib.Variant) -> str | None:
+    """Read the handle_token out of whichever a{sv} argument carries it.
+
+    Every caller already puts a handle_token in its options dict, and the
+    Request object path must match exactly that token - so this only reads it.
+    Unpacking and re-packing the whole tuple would demote the variant values to
+    plain Python objects, and 'v' arguments require GLib.Variant instances.
+    """
+    for index in range(parameters.n_children()):
+        child = parameters.get_child_value(index)
+        if not child.get_type_string().endswith("v}"):
+            continue
+        token = child.lookup_value("handle_token", GLib.VariantType.new("s"))
+        if token is not None:
+            return token.get_string()
+    return None
+
+
 def _call_request(connection: Gio.DBusConnection, interface: str, method: str,
                   parameters: GLib.Variant, timeout_s: float = 90.0) -> dict:
     """Call a portal method that answers with a Request Response signal."""
-    handle_token = _token()
+    handle_token = _options_token(parameters)
+    if not handle_token:
+        raise PortalError(f"{interface}.{method} was called without a handle_token")
     path = _request_path(connection, handle_token)
-    # Bind the token into the options dict the caller prepared.
-    if parameters is None:
-        parameters = GLib.Variant("(a{sv})", ({"handle_token": GLib.Variant("s", handle_token)},))
-    else:
-        signature, values = parameters.get_type_string(), list(parameters.unpack())
-        options_index = None
-        for index, part in enumerate(signature[1:-1]):
-            if part == "a":
-                # first array-of-dict argument is the options dict of interest
-                candidate = options_index = index
-                del candidate
-                break
-        del options_index
-        values = _with_token(signature, values, handle_token)
-        parameters = GLib.Variant(signature, tuple(values))
 
     loop = GLib.MainLoop()
     outcome: dict = {}
@@ -265,19 +270,6 @@ def _call_request(connection: Gio.DBusConnection, interface: str, method: str,
         reason = "cancelled by the user" if outcome["response"] == 1 else "closed by the user"
         raise PortalError(f"{interface}.{method} was {reason}")
     return outcome["results"]
-
-
-def _with_token(signature: str, values: list, handle_token: str) -> list:
-    """Insert handle_token into the trailing a{sv} options argument."""
-    del signature
-    values = list(values)
-    for index in range(len(values) - 1, -1, -1):
-        if isinstance(values[index], dict):
-            options = dict(values[index])
-            options["handle_token"] = handle_token
-            values[index] = options
-            break
-    return values
 
 
 # --------------------------------------------------------------------------- #
