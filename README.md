@@ -102,6 +102,20 @@ python3 -u $MCP --clear-unlock-password  # 从钥匙环删除
 
 ## 故障排查
 
+### Pointer events are ignored
+
+On rare sessions GNOME keeps the virtual pointer device open but stops
+honouring its motion: keyboard and scroll still work, clicks do nothing.
+
+1. `desktop_status` with `reset_input: true` recreates the devices
+2. if that does not help, reboot the machine (a logout/login is not always
+   enough, because `dsh web` can survive it through systemd user lingering)
+3. `dsh web` itself must run inside the current desktop session: its
+   `DBUS_SESSION_BUS_ADDRESS` is inherited, so an old process cannot reach the
+   accessibility bus or the portal any more
+
+
+
 ```bash
 python3 -u ~/.local/share/dsh-linux-computer-use/linux_desktop_mcp.py --selftest
 ```
