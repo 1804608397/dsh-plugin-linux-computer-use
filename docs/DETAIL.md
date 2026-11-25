@@ -18,16 +18,16 @@ Wayland neither exists, so each capability has its own path:
 
 ## Requirements
 
-Run the preparation script once, then log out and back in:
+Run the preparation script once (no logout needed):
 
 ```bash
-cd "/home/cheng/Documents/DSH Default Workspace"
-sudo ./linux-computer-use-prep.sh        # packages, udev rule, group, ydotoold
-./linux-computer-use-prep.sh --verify    # after re-login
+sudo ./linux-computer-use-prep.sh        # packages, udev rule, ACL, launcher
+./linux-computer-use-prep.sh --verify
 ```
 
 It installs `wl-clipboard` (required), `ydotool` (optional fallback), creates
-`/etc/udev/rules.d/60-uinput.rules` so `/dev/uinput` belongs to group `input`
+`/etc/udev/rules.d/60-uinput.rules` so `/dev/uinput` carries `TAG+="uaccess"`
+(an ACL for the active desktop user) and also belongs to group `input`
 with mode `0660`, adds you to that group, and installs a `ydotoold` unit. It is
 idempotent and has `--uninstall`.
 

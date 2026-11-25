@@ -56,9 +56,12 @@ if [ "${1:-}" = "--verify" ]; then
     ls -l /dev/uinput | sed 's/^/       /'
     if [ -w /dev/uinput ] && [ -r /dev/uinput ]; then
       c_ok "/dev/uinput readable+writable by you (input injection ready)"
+    elif command -v getfacl >/dev/null && getfacl -p /dev/uinput 2>/dev/null | grep -q "^user:${TARGET_USER}:rw"; then
+      c_warn "/dev/uinput has an ACL for $TARGET_USER but this shell is not using it"
+      c_warn "  -> start the plugin from the desktop session (or re-run this script)"
     else
       c_warn "/dev/uinput NOT accessible to you yet"
-      c_warn "  -> group 'input' only applies to a fresh login: log out and back in"
+      c_warn "  -> re-run this script (it adds a uaccess ACL), then restart 'dsh web'"
     fi
   else
     c_bad "/dev/uinput missing (kernel built without CONFIG_INPUT_UINPUT?)"
@@ -159,8 +162,12 @@ fi
 # 3. udev rule --------------------------------------------------------------
 say "Installing udev rule for /dev/uinput"
 cat > "$UDEV_RULE" <<'EOF'
-# Let the "input" group inject synthetic input through /dev/uinput (DSH Linux Computer Use).
-KERNEL=="uinput", SUBSYSTEM=="misc", GROUP="input", MODE="0660", OPTIONS+="watch"
+# Give the logged-in desktop user access to /dev/uinput (DSH Linux Computer Use).
+# TAG+="uaccess" makes systemd-logind grant the *active session user* an ACL. That
+# is the important part: the process keeps its normal gid, so tools that inspect
+# the caller through /proc/<pid>/root (xdg-desktop-portal screen capture) still
+# work. GROUP="input" is only a secondary path for setups without logind.
+KERNEL=="uinput", SUBSYSTEM=="misc", GROUP="input", MODE="0660", TAG+="uaccess", OPTIONS+="watch"
 EOF
 udevadm control --reload-rules || c_warn "udevadm control failed"
 udevadm trigger --name-match=uinput 2>/dev/null || c_warn "udevadm trigger failed"
@@ -168,6 +175,13 @@ udevadm trigger --name-match=uinput 2>/dev/null || c_warn "udevadm trigger faile
 # fix permissions now as well, which makes the plugin usable in this boot.
 if [ -c /dev/uinput ]; then
   chgrp input /dev/uinput && chmod 0660 /dev/uinput
+  if command -v setfacl >/dev/null; then
+    setfacl -m "u:${TARGET_USER}:rw" /dev/uinput \
+      && c_ok "ACL: u:${TARGET_USER}:rw on /dev/uinput" \
+      || c_warn "setfacl on /dev/uinput failed"
+  else
+    c_warn "setfacl missing (apt install acl) — falling back to the input group"
+  fi
   c_ok "$UDEV_RULE installed; current permissions applied"
   ls -l /dev/uinput | sed 's/^/       /'
 fi
@@ -230,8 +244,10 @@ cat > "$LAUNCHER" <<'LAUNCH'
 #
 # If the process that spawned us predates the 'input' group change (a long
 # running DSH host, or a lingering systemd --user manager), our own group list
-# is stale and /dev/uinput stays out of reach. `sg input` re-execs with a fresh
-# group list without needing a password, so injection keeps working.
+# is stale and /dev/uinput stays out of reach. The udev uaccess ACL is the
+# normal fix and needs no credentials at all. `sg input` is only an explicit
+# opt-in escape hatch: it swaps the process gid, which makes xdg-desktop-portal
+# refuse to identify us (/proc/<pid>/root) and therefore breaks screen capture.
 DIR="${DSH_LINUX_CU_DIR:-$HOME/.local/share/dsh-linux-computer-use}"
 SELF="/usr/local/bin/dsh-linux-desktop-mcp"
 if [ ! -f "$DIR/linux_desktop_mcp.py" ]; then
@@ -239,12 +255,7 @@ if [ ! -f "$DIR/linux_desktop_mcp.py" ]; then
   echo "enable the plugin once (it syncs the server there), then retry" >&2
   exit 1
 fi
-if [ -z "${DSH_LINUX_CU_SG:-}" ] && [ "$#" -eq 0 ] \
-   && [ ! -w /dev/uinput ] \
-   && getent group input 2>/dev/null | awk -F: '{print $4}' | tr ',' '\n' \
-      | grep -qx "$(id -un)"; then
-  DSH_LINUX_CU_SG=1
-  export DSH_LINUX_CU_SG
+if [ "${DSH_LINUX_CU_FORCE_SG:-}" = 1 ] && [ "$#" -eq 0 ]; then
   exec sg input -c "exec \"$SELF\""
 fi
 exec /usr/bin/python3 -u "$DIR/linux_desktop_mcp.py" "$@"
@@ -260,13 +271,11 @@ c_ok "server home: $SHARE_DIR"
 say "Done"
 cat <<EOF
 Next steps:
-  1. Restart the DSH host (dsh web) so the MCP bridge picks this up.
-     Logging out is NOT required: the launcher re-execs through 'sg input',
-     so it works even if the host process still has the old group list.
-  2. Run:  $0 --verify
-  3. Tell the DSH agent it is done; it will verify and switch the plugin on.
+  1. Run:  $0 --verify
+  2. Tell the DSH agent it is done; it will restart the plugin and check again.
 
 Note: any process running as $TARGET_USER can now inject keyboard/mouse input.
-That is the point of the feature. The ydotoold socket stays 0600 so other local
-users cannot, and /dev/uinput is limited to the 'input' group.
+That is the point of the feature. Access goes through a uaccess ACL on
+/dev/uinput (plus the 'input' group as a fallback), and the ydotoold socket,
+when present, stays 0600.
 EOF

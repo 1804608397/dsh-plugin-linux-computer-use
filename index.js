@@ -82,8 +82,8 @@ function check(list, id, status, title, detail, fix) {
  *
  * Reading the group database instead of process credentials is deliberate:
  * a long running host keeps the group list it was started with, so the two can
- * disagree for as long as the host stays up. The launcher bridges that gap with
- * `sg input`, which means group membership in the database is what matters.
+ * disagree for as long as the host stays up. That mismatch is only used to give
+ * a better explanation - the real signal stays "can this process open the device".
  */
 function inInputGroup() {
   try {
@@ -272,31 +272,20 @@ function createDoctor(tools, python, sync) {
         check(checks, 'uinput', 'ok', '/dev/uinput is writable by this account')
       } catch (error) {
         const member = inInputGroup()
-        if (error?.code !== 'ENOENT' && member) {
-          // This process predates the group change (a long running DSH host, or a
-          // lingering systemd --user manager). The launcher re-execs through
-          // `sg input`, so injection still works - only our own view is stale.
-          check(
-            checks,
-            'uinput',
-            'ok',
-            `${member} is in the "input" group; the launcher re-execs through sg so injection works`,
-            '/dev/uinput is not readable from this long running process yet',
-          )
-        } else {
-          const detail =
-            error?.code === 'ENOENT'
-              ? '/dev/uinput does not exist on this machine (kernel built without CONFIG_INPUT_UINPUT?)'
+        const detail =
+          error?.code === 'ENOENT'
+            ? '/dev/uinput does not exist on this machine (kernel built without CONFIG_INPUT_UINPUT?)'
+            : member
+              ? `/dev/uinput is not writable from this process. ${member} is in the "input" group, but a running process never picks up group changes - the uaccess ACL from the prep script is what makes this work`
               : '/dev/uinput exists but this account cannot open it for writing'
-          check(
-            checks,
-            'uinput',
-            'fail',
-            'pointer and keyboard injection cannot work',
-            detail,
-            'sudo ./linux-computer-use-prep.sh, then log out and back in so the "input" group applies',
-          )
-        }
+        check(
+          checks,
+          'uinput',
+          'fail',
+          'pointer and keyboard injection cannot work',
+          detail,
+          'sudo ./linux-computer-use-prep.sh (adds a uaccess ACL on /dev/uinput), then restart dsh web',
+        )
       }
 
       const selftest = await runSelftest(python, script)

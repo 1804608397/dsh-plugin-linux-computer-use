@@ -33,17 +33,19 @@ dsh plugin --profile web add dsh-plugin-linux-computer-use
 sudo ./linux-computer-use-prep.sh
 sudo ./linux-computer-use-prep.sh --verify   # 不需要 sudo
 
-# 3. 重启 dsh（注销重登不是必需，见下方说明）
+# 3. 重启 dsh（不需要注销重登，见下方说明）
 ```
 
 准备脚本做四件事：
 
-1. `/dev/uinput` → `input` 组、0660，并持久化成 udev 规则；
-2. 把当前用户加进 `input` 组；
+1. udev 规则给 `/dev/uinput` 加上 `uaccess`，并立刻 `setfacl` 授予你 `rw`（这是主路径：进程身份不变）；
+2. 顺带把它设成 `input` 组、0660（备用路径，给没有 logind 的场景）；
 3. 装 `wl-clipboard`（必需）和 `ydotool`（可选兜底；Ubuntu 24.04 的 ydotool 包里没有 `ydotoold` 守护进程，所以兜底路径默认不可用——主路径 `/dev/uinput` 不依赖它）；
 4. 装一个固定路径启动器 `/usr/local/bin/dsh-linux-desktop-mcp`。
 
-改完组之后**不需要注销**：启动器会在发现自己拿不到 `/dev/uinput` 时用 `sg input` 重新 exec 一次（不需要密码），所以哪怕宿主进程是很久以前启动的、哪怕 `systemd --user` 因为 `Linger=yes` 一直没重启，注入依然可用。注销重登只是让 `id` 显示得漂亮些，不是必需步骤。
+**不需要注销重登**：权限走 ACL（`u:cheng:rw`），不靠进程的组身份，所以哪怕宿主进程是很久以前启动的、哪怕 `systemd --user` 因为 `Linger=yes` 一直没重启，注入依然可用——只要重启一次 `dsh` 让 MCP 子进程重新拉起。
+
+> 为什么不用 `sg input` 换组：`sg` 会把**真实 gid** 也切成 `input` 组的 995，而 `xdg-desktop-portal` 要用 `/proc/<pid>/root` 识别调用者身份，内核的 gid 检查会直接 `EACCES`，截屏就废了（实测报 `Portal operation not allowed: Unable to open /proc/<pid>/root`）。ACL 不碰进程身份，两条路都通。
 
 ## 打开
 
@@ -89,6 +91,6 @@ MIT
 
 Linux desktop automation for DeepSeek Harness on Wayland. Screenshots go through `xdg-desktop-portal` ScreenCast (the only Wayland-legal path) into GStreamer; pointer and keyboard input go straight to `/dev/uinput` so applications cannot tell them from a real user; the UI tree comes from AT-SPI2. 28 tools are published as `mcp__linux__*`, plus a `linux_mcp_doctor` host tool that diagnoses the environment even while the bridge is off. Ships disabled: enable it in Settings → Plugins.
 
-Install: `dsh plugin --profile web add dsh-plugin-linux-computer-use`, run `sudo ./linux-computer-use-prep.sh`, log out and back in, restart `dsh`, then flip the switch.
+Install: `dsh plugin --profile web add dsh-plugin-linux-computer-use`, run `sudo ./linux-computer-use-prep.sh`, restart `dsh`, then flip the switch.
 
 Known limit: Chromium, Electron and Qt windows expose an empty accessibility tree, so they need screenshot-and-coordinates clicking rather than semantic element actions.

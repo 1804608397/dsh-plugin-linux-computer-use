@@ -450,9 +450,9 @@ class InputController:
         raise InputError(
             "no input backend available: /dev/uinput is not readable+writable "
             f"({uinput_path}) and ydotool is not usable. Run the prep script "
-            "(linux-computer-use-prep.sh) once, log out and back in so the "
-            "'input' group applies, then RESTART the app that launches this "
-            "server - a long-running process keeps the group list it started with."
+            "(linux-computer-use-prep.sh) once (it adds a uaccess ACL on the "
+            "device), then RESTART the app that launches this server - a "
+            "long-running process keeps the permissions it started with."
         )
 
     @property
