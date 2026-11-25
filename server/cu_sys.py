@@ -8,6 +8,7 @@ equivalent:
 * app launch       -> fork/exec of an argv, detached from the server
 * "registry"       -> ``gsettings`` / ``dconf`` (the user-facing settings store)
 * notifications    -> ``org.freedesktop.Notifications`` over the session bus
+* lock state       -> ``org.gnome.ScreenSaver.GetActive`` over the session bus
 * capability probe -> what the doctor tool reports
 
 Everything shells out to the system binaries the prep script installs, so the
@@ -48,6 +49,41 @@ def _run(argv: list[str], timeout: float = RUN_TIMEOUT, stdin: str | None = None
     except subprocess.TimeoutExpired as error:
         raise SysError(f"{argv[0]} timed out after {timeout:.0f}s") from error
     return completed.returncode, completed.stdout, completed.stderr
+
+
+def screen_locked() -> bool | None:
+    """Report whether the GNOME session is locked (``True``/``False``/``None``).
+
+    A locked screen still allows screenshots but must never receive injected
+    keystrokes or clicks: the lock screen's focused widget is the password
+    field, so synthetic input would type a password nobody asked for. ``None``
+    means the state could not be read (no session bus, no screen saver
+    service), in which case callers keep working and rely on the user.
+    """
+    try:
+        import gi
+
+        gi.require_version("Gio", "2.0")
+        gi.require_version("GLib", "2.0")
+        from gi.repository import Gio, GLib
+    except (ImportError, ValueError):
+        return None
+    try:
+        connection = Gio.bus_get_sync(Gio.BusType.SESSION, None)
+        reply = connection.call_sync(
+            "org.gnome.ScreenSaver",
+            "/org/gnome/ScreenSaver",
+            "org.gnome.ScreenSaver",
+            "GetActive",
+            None,
+            GLib.VariantType.new("(b)"),
+            Gio.DBusCallFlags.NONE,
+            2000,
+            None,
+        )
+        return bool(reply.unpack()[0])
+    except Exception:  # noqa: BLE001 - a missing service is not an error here
+        return None
 
 
 def have(binary: str) -> bool:

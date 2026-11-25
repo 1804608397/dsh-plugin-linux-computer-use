@@ -105,6 +105,24 @@ def controller(reload_layout: bool = False) -> cu_input.InputController:
     return INPUT
 
 
+def _guard_input(what: str) -> None:
+    """Refuse to inject input while the session is locked.
+
+    A locked GNOME session keeps the password field focused, so a stray click
+    or keystroke lands inside it. Screenshots stay allowed; only input is
+    blocked. ``DSH_LINUX_CU_ALLOW_LOCKED_INPUT=1`` is the escape hatch for
+    someone who really knows what they are doing.
+    """
+    if os.environ.get("DSH_LINUX_CU_ALLOW_LOCKED_INPUT") == "1":
+        return
+    if cu_sys.screen_locked() is True:
+        raise ToolError(
+            f"refusing to {what}: the session is locked. The lock screen's focused "
+            "widget is the password field, so injected input would type into it. "
+            "Unlock the desktop and retry; mcp__linux__screenshot still works."
+        )
+
+
 def _to_logical(x: float, y: float, space: str) -> tuple[float, float]:
     if space == "screenshot":
         shot_w = LAST_SHOT.get("width") or 0
@@ -245,17 +263,20 @@ def tool_ui_text(args: dict) -> dict:
 
 
 def tool_ui_action(args: dict) -> dict:
+    _guard_input("tool_ui_action")
     ref = _require(args, "ref")
     action = args.get("action")
     return A11Y.action(ref, action)
 
 
 def tool_ui_focus(args: dict) -> dict:
+    _guard_input("tool_ui_focus")
     ref = _require(args, "ref")
     return A11Y.focus(ref)
 
 
 def tool_ui_set_text(args: dict) -> dict:
+    _guard_input("tool_ui_set_text")
     ref = _require(args, "ref")
     text = args.get("text")
     if not isinstance(text, str):
@@ -264,6 +285,7 @@ def tool_ui_set_text(args: dict) -> dict:
 
 
 def tool_click(args: dict) -> dict:
+    _guard_input("click")
     x, y = _point(args)
     x, y = _to_logical(x, y, str(args.get("space", "logical")))
     button = _button_name(args.get("button", 1))
@@ -273,6 +295,7 @@ def tool_click(args: dict) -> dict:
 
 
 def tool_move(args: dict) -> dict:
+    _guard_input("move the pointer")
     x, y = _point(args)
     x, y = _to_logical(x, y, str(args.get("space", "logical")))
     controller().move(x, y)
@@ -280,6 +303,7 @@ def tool_move(args: dict) -> dict:
 
 
 def tool_drag(args: dict) -> dict:
+    _guard_input("drag")
     start = (float(args.get("x1", 0)), float(args.get("y1", 0)))
     end = (float(args.get("x2", 0)), float(args.get("y2", 0)))
     space = str(args.get("space", "logical"))
@@ -291,6 +315,7 @@ def tool_drag(args: dict) -> dict:
 
 
 def tool_scroll(args: dict) -> dict:
+    _guard_input("scroll")
     dx = int(args.get("dx", 0))
     dy = int(args.get("dy", 0))
     if not dx and not dy:
@@ -300,6 +325,7 @@ def tool_scroll(args: dict) -> dict:
 
 
 def tool_pointer_button(args: dict) -> dict:
+    _guard_input("press a mouse button")
     action = str(args.get("action", "press")).lower()
     button = _button_name(args.get("button", 1))
     if args.get("x") is not None and args.get("y") is not None:
@@ -315,12 +341,14 @@ def tool_pointer_button(args: dict) -> dict:
 
 
 def tool_key(args: dict) -> dict:
+    _guard_input("press a key")
     combo = _require(args, "combo")
     controller().key(str(combo))
     return {"pressed": combo}
 
 
 def tool_type_text(args: dict) -> dict:
+    _guard_input("type text")
     text = _require(args, "text")
     controller().type_text(str(text))
     return {"typed": len(str(text))}
@@ -442,6 +470,7 @@ def tool_desktop_status(args: dict) -> dict:
     status["session"] = {
         "type": os.environ.get("XDG_SESSION_TYPE", ""),
         "desktop": os.environ.get("XDG_CURRENT_DESKTOP", ""),
+        "locked": cu_sys.screen_locked(),
     }
     try:
         current = layout()
@@ -1109,6 +1138,21 @@ def selftest() -> dict:
         )
     else:
         _check(checks, "gstreamer", "ok", "GStreamer pipewiresrc available")
+
+    locked = cu_sys.screen_locked()
+    if locked is True:
+        _check(
+            checks,
+            "screen-lock",
+            "warn",
+            "the session is locked right now",
+            "screenshots still work; input tools refuse to type into the password field",
+            "unlock the desktop to drive it",
+        )
+    elif locked is False:
+        _check(checks, "screen-lock", "ok", "the session is unlocked")
+    else:
+        _check(checks, "screen-lock", "warn", "lock state is unknown", "org.gnome.ScreenSaver.GetActive did not answer")
 
     token_path = cu_display.ScreencastSession.token_path() if hasattr(cu_display.ScreencastSession, "token_path") else None
     has_token = bool(cu_display.ScreencastSession.load_token())

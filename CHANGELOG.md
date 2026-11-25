@@ -16,5 +16,7 @@ First release.
   fallback (`DSH_LINUX_CU_SCREENCAST=1`).
 - Input injection straight into `/dev/uinput` (absolute pointer, wheel device, full keyboard),
   with `ydotool` as the fallback backend.
+- Refuses pointer/keyboard injection while the session is locked (screenshots keep working),
+  and reports `session.locked` in `desktop_status`.
 - Ships disabled: Computer Use is turned on in Settings → Plugins.
 - `linux-computer-use-prep.sh`: idempotent sudo setup with `--verify` and `--uninstall`.

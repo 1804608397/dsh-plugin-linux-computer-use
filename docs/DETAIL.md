@@ -14,6 +14,7 @@ Wayland neither exists, so each capability has its own path:
 | UI tree | **AT-SPI2** (`org.a11y.Bus`) | UI Automation equivalent |
 | Clipboard | `wl-copy` / `wl-paste` | `xclip` does not work on Wayland |
 | Settings ("registry") | `gsettings` / dconf | closest analogue to the registry |
+| Lock state | `org.gnome.ScreenSaver.GetActive` over the session bus | input must stop while the lock screen holds the password field; screenshots stay allowed |
 | Processes | `ps` and `/proc` | portable |
 
 ## Requirements

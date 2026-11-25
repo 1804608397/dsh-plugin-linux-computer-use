@@ -58,7 +58,7 @@ sudo ./linux-computer-use-prep.sh --verify   # 不需要 sudo
 - **Chromium / Electron / Qt 应用（Chrome、VS Code、微信、WPS、Bitwarden）暴露的 UI 树是空的**——这是平台事实，不是 bug。它们只能靠"截屏 + 坐标点击"，窗口一动就得重新截图。原生 GTK 应用用 `ui_find` + `ui_action` 很稳。
 - AT-SPI 全量枚举约 3–4 秒（某个无响应应用会拖慢），所以应用列表有 5 秒缓存。
 - 截屏必须走 portal：第一次会弹一次系统授权框（GNOME 记住你的选择），之后每次截图静默、约 0.5 秒。ScreenCast 流式路径（`DSH_LINUX_CU_SCREENCAST=1` 可强制）在 GNOME 46 上画面静止时不产帧，只当兜底。
-- 锁屏状态下无法注入（这是好事）。
+- **锁屏时只截图、不注入**：服务器会向 `org.gnome.ScreenSaver.GetActive` 查询锁屏状态，处于锁屏时 `click` / `key` / `type_text` 等全部拒绝执行（锁屏焦点在密码框上，误打就会往密码里塞字符），`screenshot` 仍可用。`desktop_status` 的 `session.locked` 会告诉你当前状态。
 - 只能工作在**当前登录的图形会话**里；SSH / 无头环境下没有桌面可控制。
 
 ## 安全模型
