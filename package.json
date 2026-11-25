@@ -46,6 +46,15 @@
   "engines": {
     "node": ">=20"
   },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/1804608397/dsh-plugin-linux-computer-use.git"
+  },
+  "homepage": "https://github.com/1804608397/dsh-plugin-linux-computer-use#readme",
+  "bugs": {
+    "url": "https://github.com/1804608397/dsh-plugin-linux-computer-use/issues"
+  },
+  "author": "Beining Cheng <1804608397@users.noreply.github.com>",
   "dsh": {
     "bundle": {
       "patch": "./cordis.patch.yml"
