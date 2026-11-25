@@ -12,7 +12,7 @@ English summary at the bottom.
 
 | 能力 | 后端（为何） |
 | --- | --- |
-| 截屏 | `xdg-desktop-portal` ScreenCast（Wayland 下唯一合法路径）+ GStreamer `pipewiresrc`→PNG；授权一次后靠 restore_token 长期复用 |
+| 截屏 | `xdg-desktop-portal` Screenshot 接口（Wayland 下唯一合法路径）；首次点一次系统授权框，之后每次静默、约 0.5 秒出图。ScreenCast+`pipewiresrc` 流式路径保留作兜底（GNOME 46 下静态画面取不到帧） |
 | UI 树 / 找元素 / 点击元素 | AT-SPI2（`org.a11y.Bus`）——GNOME 原生应用完整可用 |
 | 鼠标 / 键盘注入 | 直写 `/dev/uinput`（内核级，应用无法区分真人）；`ydotool` 作兜底 |
 | 剪贴板 | `wl-clipboard`（`wl-copy` / `wl-paste`） |
@@ -57,7 +57,7 @@ sudo ./linux-computer-use-prep.sh --verify   # 不需要 sudo
 
 - **Chromium / Electron / Qt 应用（Chrome、VS Code、微信、WPS、Bitwarden）暴露的 UI 树是空的**——这是平台事实，不是 bug。它们只能靠"截屏 + 坐标点击"，窗口一动就得重新截图。原生 GTK 应用用 `ui_find` + `ui_action` 很稳。
 - AT-SPI 全量枚举约 3–4 秒（某个无响应应用会拖慢），所以应用列表有 5 秒缓存。
-- 截屏必须走 portal：第一次会弹一次系统授权框，之后靠 `restore_token` 静默复用；令牌存在 `~/.cache/dsh-linux-cu/screencast.json`（0600）。
+- 截屏必须走 portal：第一次会弹一次系统授权框（GNOME 记住你的选择），之后每次截图静默、约 0.5 秒。ScreenCast 流式路径（`DSH_LINUX_CU_SCREENCAST=1` 可强制）在 GNOME 46 上画面静止时不产帧，只当兜底。
 - 锁屏状态下无法注入（这是好事）。
 - 只能工作在**当前登录的图形会话**里；SSH / 无头环境下没有桌面可控制。
 
@@ -89,7 +89,7 @@ MIT
 
 ### English
 
-Linux desktop automation for DeepSeek Harness on Wayland. Screenshots go through `xdg-desktop-portal` ScreenCast (the only Wayland-legal path) into GStreamer; pointer and keyboard input go straight to `/dev/uinput` so applications cannot tell them from a real user; the UI tree comes from AT-SPI2. 28 tools are published as `mcp__linux__*`, plus a `linux_mcp_doctor` host tool that diagnoses the environment even while the bridge is off. Ships disabled: enable it in Settings → Plugins.
+Linux desktop automation for DeepSeek Harness on Wayland. Screenshots go through the `xdg-desktop-portal` Screenshot interface (the only Wayland-legal path, ~0.5s per capture after one granted approval); pointer and keyboard input go straight to `/dev/uinput` so applications cannot tell them from a real user; the UI tree comes from AT-SPI2. 28 tools are published as `mcp__linux__*`, plus a `linux_mcp_doctor` host tool that diagnoses the environment even while the bridge is off. Ships disabled: enable it in Settings → Plugins.
 
 Install: `dsh plugin --profile web add dsh-plugin-linux-computer-use`, run `sudo ./linux-computer-use-prep.sh`, restart `dsh`, then flip the switch.
 

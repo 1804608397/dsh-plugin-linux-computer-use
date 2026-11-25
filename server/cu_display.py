@@ -2,16 +2,16 @@
 
 Screenshots on a Wayland GNOME session cannot come from ``org.gnome.Shell``
 (its Screenshot interface answers AccessDenied to every external client), so
-frames are pulled from the ``org.freedesktop.portal.ScreenCast`` portal:
+the portal is the only legal source. Two portal paths live here:
 
-* the first call opens the portal's "share your screen" dialog exactly once and
-  stores the returned ``restore_token`` under ``~/.cache/dsh-linux-cu``;
-* later calls reuse the token, so periodic sampling never asks again;
-* frames are read from the portal's private PipeWire remote through
-  ``pipewiresrc`` and encoded with ``pngenc``.
-
-``org.freedesktop.portal.Screenshot`` is kept as a one-shot fallback, but that
-path shows a confirmation dialog on every single screenshot.
+* ``org.freedesktop.portal.Screenshot`` — one request, one PNG back in roughly
+  half a second. GNOME remembers the answer, so after the first approval it
+  never asks again. This is what the server uses by default.
+* ``org.freedesktop.portal.ScreenCast`` — a persistent PipeWire session whose
+  ``restore_token`` is stored under ``~/.cache/dsh-linux-cu``. Frames are read
+  with ``pipewiresrc`` and encoded by ``pngenc``. Kept as a fallback: on GNOME
+  46/Mutter the stream delivers its first frames during preroll and then stays
+  silent while the screen is static, so a one-shot capture can time out.
 """
 
 from __future__ import annotations
@@ -329,11 +329,15 @@ class ScreencastSession:
             ({"handle_token": GLib.Variant("s", _token()),
               "session_handle_token": GLib.Variant("s", _token())},),
         )
-        self.session_handle = _call_request(connection, SCREENCAST_IFACE, "CreateSession", create, 30)
-        if isinstance(self.session_handle, tuple):
-            self.session_handle = self.session_handle[0]
-        if not isinstance(self.session_handle, str):
-            raise PortalError(f"unexpected CreateSession reply: {self.session_handle!r}")
+        reply = _call_request(connection, SCREENCAST_IFACE, "CreateSession", create, 30)
+        # xdg-desktop-portal answers a request with a{sv} results dict, while the
+        # documented signature is (o). Accept both shapes.
+        handle = reply.get("session_handle") if isinstance(reply, dict) else reply
+        if isinstance(handle, tuple):
+            handle = handle[0]
+        if not isinstance(handle, str):
+            raise PortalError(f"unexpected CreateSession reply: {reply!r}")
+        self.session_handle = handle
 
         options: dict[str, GLib.Variant] = {
             "types": GLib.Variant("u", SOURCE_MONITOR),

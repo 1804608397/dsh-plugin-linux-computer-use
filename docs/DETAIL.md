@@ -9,7 +9,7 @@ Wayland neither exists, so each capability has its own path:
 
 | Capability | How it works here | Why |
 | --- | --- | --- |
-| Screenshot | `xdg-desktop-portal` **ScreenCast** (one approval, remembered) → PipeWire → GStreamer → PNG | Wayland forbids silent screen capture; `org.gnome.Shell.Screenshot` returns *AccessDenied* for clients |
+| Screenshot | `xdg-desktop-portal` **Screenshot** (one approval, remembered by the desktop) → PNG in ~0.5s. A **ScreenCast** + `pipewiresrc` session stays as a fallback (`DSH_LINUX_CU_SCREENCAST=1`) | Wayland forbids silent screen capture; `org.gnome.Shell.Screenshot` returns *AccessDenied* for clients, and the ScreenCast stream stalls on static content under GNOME 46 |
 | Pointer / keyboard | `/dev/uinput`: the server creates an absolute tablet device, a wheel device and a full keyboard, and writes kernel input events | No `SendInput`. `xdotool` only reaches XWayland windows, and `ydotool` (fallback) cannot scroll |
 | UI tree | **AT-SPI2** (`org.a11y.Bus`) | UI Automation equivalent |
 | Clipboard | `wl-copy` / `wl-paste` | `xclip` does not work on Wayland |

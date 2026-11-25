@@ -4,7 +4,7 @@
 The server speaks newline-delimited JSON-RPC 2.0 on stdin/stdout (the MCP stdio
 transport) and exposes the tools DSH publishes as ``mcp__linux__*``:
 
-  vision    screenshot                       portal ScreenCast frame -> PNG
+  vision    screenshot                       portal Screenshot -> PNG
   tree      ui_apps, ui_tree, ui_find, ui_describe, ui_text
   action    ui_action, ui_focus, ui_set_text
   pointer   click, move, drag, scroll, pointer_button
@@ -19,8 +19,10 @@ Design notes that matter when editing this file:
 * Input injection goes through /dev/uinput (see cu_input.py): it needs the udev
   rule from the prep script and a re-login. When it is unavailable the tools
   fail with an actionable message instead of silently doing nothing.
-* Screenshots go through the ScreenCast portal, which asks for permission once
-  and then remembers the choice via a stored restore token.
+* Screenshots go through the portal Screenshot interface: GNOME asks once and
+  then remembers the answer, so repeated captures are silent (~0.5s each). The
+  ScreenCast session in cu_display.py is only a fallback behind
+  DSH_LINUX_CU_SCREENCAST=1.
 * Coordinates are logical desktop pixels. ``space="screenshot"`` converts from
   the pixels of the most recent screenshot, which differ on HiDPI setups.
 """
@@ -115,22 +117,40 @@ def _to_logical(x: float, y: float, space: str) -> tuple[float, float]:
 
 
 def capture_shot(max_width: int = SHOT_MAX_WIDTH) -> dict:
-    session = cu_display.ScreencastSession.shared()
-    try:
-        session.ensure()
-    except cu_display.PortalError as error:
-        raise ToolError(
-            f"screen capture is unavailable: {error}. "
-            "The ScreenCast portal needs a one-time 'Share your screen' approval; "
-            "run linux_mcp_doctor to see the current state."
-        ) from error
+    """Grab the desktop, preferring the screenshot portal over a pipewire stream.
+
+    The portal Screenshot interface is a single round trip (~0.5s) and needs no
+    long-lived session, so it is the default. The ScreenCast + GStreamer path
+    stays as a fallback because it is the only one that can stream frames when
+    capture permission exists but the screenshot interface is missing.
+    """
     name = f"shot-{time.strftime('%Y%m%d-%H%M%S')}-{int(time.time() * 1000) % 1000:03d}.png"
     path = os.path.join(cu_display.SHOT_DIR, name)
-    try:
-        cu_display.capture_frame(session, path)
-    except cu_display.PortalError as error:
-        session.close()
-        raise ToolError(f"could not capture a frame: {error}") from error
+    method = ""
+    screenshot_error: Exception | None = None
+
+    if os.environ.get("DSH_LINUX_CU_SCREENCAST") != "1":
+        try:
+            cu_display.portal_screenshot(path)
+            method = "portal-screenshot"
+        except cu_display.PortalError as error:
+            screenshot_error = error
+
+    if not method:
+        session = cu_display.ScreencastSession.shared()
+        try:
+            session.ensure()
+            cu_display.capture_frame(session, path)
+            method = "portal-screencast"
+        except cu_display.PortalError as error:
+            session.close()
+            detail = f" (the screenshot portal said: {screenshot_error})" if screenshot_error else ""
+            raise ToolError(
+                f"screen capture is unavailable: {error}{detail}. "
+                "Grant screen sharing once when the desktop asks, then retry; "
+                "run linux_mcp_doctor to see the current state."
+            ) from error
+
     width, height = cu_display.downscale(path, max_width)
     current = layout()
     LAST_SHOT.update({
@@ -148,6 +168,7 @@ def capture_shot(max_width: int = SHOT_MAX_WIDTH) -> dict:
         "logical_height": current.height,
         "coordinate_scale": round(current.width / width, 6) if width else 1.0,
         "captured_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
+        "method": method,
     }
 
 
@@ -434,11 +455,13 @@ def tool_desktop_status(args: dict) -> dict:
         status["input"] = {"ready": False, "error": str(error)}
     token = cu_display.ScreencastSession.load_token()
     status["capture"] = {
-        "restore_token_present": bool(token),
-        "session_open": cu_display.ScreencastSession.shared().fd is not None,
+        "preferred": "portal-screenshot",
         "shots_dir": cu_display.SHOT_DIR,
-        "gstreamer_pipewiresrc": _have_gst("pipewiresrc"),
+        "portal_screenshot": True,
         "portal_screencast": True,
+        "screencast_restore_token": bool(token),
+        "screencast_session_open": cu_display.ScreencastSession.shared().fd is not None,
+        "gstreamer_pipewiresrc": _have_gst("pipewiresrc"),
     }
     try:
         apps = A11Y.apps(max_age=10.0)
@@ -495,8 +518,9 @@ TOOLS: list[dict] = [
         "name": "screenshot",
         "description": (
             "Capture the whole desktop and return it as a PNG image plus its size and path. "
-            "Use it to see the screen before deciding where to click. The first call asks for a "
-            "one-time screen-sharing approval; later calls reuse the stored permission."
+            "Use it to see the screen before deciding where to click. The desktop asks for a "
+            "one-time screen-capture approval; after that every capture is silent and takes "
+            "about half a second."
         ),
         "inputSchema": {
             "type": "object",
@@ -1089,13 +1113,13 @@ def selftest() -> dict:
     token_path = cu_display.ScreencastSession.token_path() if hasattr(cu_display.ScreencastSession, "token_path") else None
     has_token = bool(cu_display.ScreencastSession.load_token())
     if has_token:
-        _check(checks, "capture-permission", "ok", "screen sharing permission is remembered")
+        _check(checks, "capture-permission", "ok", "screen capture permission is remembered")
     else:
         _check(
             checks,
             "capture-permission",
             "warn",
-            "screen sharing has not been granted yet",
+            "screen capture has not been granted yet",
             "the first screenshot shows a one-time approval dialog"
             + (f"; token file: {token_path}" if token_path else ""),
             "run mcp__linux__screenshot once and approve the dialog",
