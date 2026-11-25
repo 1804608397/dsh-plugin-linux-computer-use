@@ -69,11 +69,32 @@ sudo ./linux-computer-use-prep.sh --verify   # 不需要 sudo
 
 ## 无人值守与锁屏
 
-锁屏是这台机器的安全基线，插件不试图绕过它：`/dev/uinput` 注入的是真实内核输入事件，在锁屏界面上它与物理键盘没有区别——正因为如此，锁屏时插件拒绝一切注入。
+锁屏是这台机器的安全基线，插件默认不试图绕过它：`/dev/uinput` 注入的是真实内核输入事件，在锁屏界面上它与物理键盘没有区别——正因为如此，默认配置下锁屏时插件拒绝一切注入。
 
 - **锁屏时能做**：截图（画面是锁屏本身，通常没用）、读文件、跑命令、写代码、git / npm 等一切非 GUI 工作。
 - **锁屏时不能做**：点击、拖拽、滚轮、按键、输入文字、UI 树操作。`desktop_status` 的 `session.locked` 和 `linux_mcp_doctor` 的 `screen-lock` 项会告诉你当前状态。
 - **想让"人不在场"也能做 GUI 任务**，干净的方向是给自动化一块**独立的虚拟显示器**（`org.gnome.Mutter.RemoteDesktop` 的 virtual monitor，GNOME 46 起可用），由 RemoteDesktop 接口往虚拟屏注入，物理屏保持锁定、你的桌面不被共享。这条路尚未实现，属于后续计划；不会走"关掉自动锁屏"或"存一份登录密码"这两条捷径。
+
+### 解锁开关（默认关闭）
+
+如果确实希望模型能自己解锁屏幕，有一个显式开关，**默认关闭**；关闭时 `unlock_screen` 工具根本不会出现在模型面前（工具列表里没有它，模型也就不知道有这个能力）。
+
+```bash
+MCP=~/.local/share/dsh-linux-computer-use/linux_desktop_mcp.py
+
+python3 -u $MCP --set-unlock-password    # 在你自己终端里输入一次，隐藏回显，存进 GNOME 钥匙环
+python3 -u $MCP --unlock-status          # 查看开关与是否已存密码
+python3 -u $MCP --unlock-policy off      # 关掉（推荐随手关）
+python3 -u $MCP --clear-unlock-password  # 从钥匙环删除
+```
+
+规则只有三条，但都是硬的：
+
+1. **密码不经过对话、配置文件和日志**。它存在 GNOME 钥匙环（libsecret）里，由你本人的终端 `getpass` 写进去；服务器只在 `unlock_screen` 被调用的那一瞬间读取，用完立刻丢引用，日志里只有"第几次尝试成功"。
+2. **解锁是唯一的例外**。开关打开后，其它注入工具在锁屏时照旧拒绝；只有一次明确的 `unlock_screen` 调用（还必须带 `confirm: "unlock"` 参数）才会去敲密码，成功后会话就是解锁状态，后续操作照常。
+3. **打开它意味着什么，要说清楚**：锁屏从此只挡"坐在键盘前的人"，不再挡"以你身份运行的软件"。任何以你账户跑的进程都能从钥匙环读到那个密码——而这本来就是插件已经给你的能力范围。这就是为什么默认关闭、为什么建议用完随手 `--unlock-policy off`。
+
+密码里如果有中文或其它非 ASCII 字符，注入会失败（`/dev/uinput` 的键盘设备只能敲有限字符集）；这种情况请继续用"回来自己解锁"。
 
 ## 故障排查
 

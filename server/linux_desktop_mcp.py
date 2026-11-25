@@ -42,6 +42,7 @@ import cu_a11y  # noqa: E402
 import cu_display  # noqa: E402
 import cu_input  # noqa: E402
 import cu_sys  # noqa: E402
+import cu_unlock  # noqa: E402
 
 SERVER_NAME = "linux-desktop-mcp"
 SERVER_VERSION = "1.0.0"
@@ -116,10 +117,17 @@ def _guard_input(what: str) -> None:
     if os.environ.get("DSH_LINUX_CU_ALLOW_LOCKED_INPUT") == "1":
         return
     if cu_sys.screen_locked() is True:
+        if cu_unlock.unlock_enabled():
+            hint = "unlock_screen is available because the user turned AI unlocking on."
+        else:
+            hint = (
+                "Unlock the desktop and retry; the user can also switch AI unlocking "
+                "on (unlock policy) to let this be handled here."
+            )
         raise ToolError(
             f"refusing to {what}: the session is locked. The lock screen's focused "
-            "widget is the password field, so injected input would type into it. "
-            "Unlock the desktop and retry; mcp__linux__screenshot still works."
+            f"widget is the password field, so injected input would type into it. "
+            f"{hint} mcp__linux__screenshot still works."
         )
 
 
@@ -471,6 +479,7 @@ def tool_desktop_status(args: dict) -> dict:
         "type": os.environ.get("XDG_SESSION_TYPE", ""),
         "desktop": os.environ.get("XDG_CURRENT_DESKTOP", ""),
         "locked": cu_sys.screen_locked(),
+        "unlock": cu_unlock.status(),
     }
     try:
         current = layout()
@@ -541,6 +550,22 @@ SPACE_PROP = {
     "default": "logical",
     "description": "Coordinate space: 'logical' desktop pixels, or 'screenshot' pixels of the last screenshot.",
 }
+
+def tool_unlock_screen(args: dict) -> dict:
+    confirm = str(args.get("confirm") or "").strip().lower()
+    if confirm != "unlock":
+        raise ToolError(
+            "unlock_screen requires confirm='unlock'. It types your stored password into the "
+            "lock screen, so only call it when the user explicitly asked you to unlock now."
+        )
+    result = cu_unlock.unlock(controller())
+    log(
+        "unlock_screen: unlocked={} attempts={}".format(
+            result.get("unlocked"), result.get("attempts")
+        )
+    )
+    return result
+
 
 TOOLS: list[dict] = [
     {
@@ -878,13 +903,50 @@ TOOLS: list[dict] = [
     },
 ]
 
-TOOL_INDEX = {spec["name"]: spec for spec in TOOLS}
+UNLOCK_TOOL: dict = {
+    "name": "unlock_screen",
+    "description": (
+        "Type the unlock password kept in the GNOME keyring into the lock screen and press Return. "
+        "It only exists while the user has switched unlocking on; with the default policy the tool "
+        "is not listed at all. The password is never sent to the model, never read from a chat, and "
+        "never written to a config file or the log."
+    ),
+    "inputSchema": {
+        "type": "object",
+        "properties": {
+            "confirm": {
+                "type": "string",
+                "enum": ["unlock"],
+                "description": "Must be literally 'unlock'; a guard against accidental calls.",
+            }
+        },
+        "required": ["confirm"],
+    },
+    "handler": tool_unlock_screen,
+}
+
+
+def visible_tools() -> list[dict]:
+    """Tools the model may see right now.
+
+    ``unlock_screen`` is opt-in per user setting, so when unlocking is off the
+    model does not even learn that the capability exists.
+    """
+    specs = list(TOOLS)
+    if cu_unlock.unlock_enabled():
+        specs.append(UNLOCK_TOOL)
+    return specs
+
+
+def tool_index() -> dict[str, dict]:
+    return {spec["name"]: spec for spec in visible_tools()}
 
 
 def call_tool(name: str, arguments: dict) -> dict:
-    spec = TOOL_INDEX.get(name)
+    index = tool_index()
+    spec = index.get(name)
     if spec is None:
-        raise ToolError(f"unknown tool {name!r}; available: {sorted(TOOL_INDEX)}")
+        raise ToolError(f"unknown tool {name!r}; available: {sorted(index)}")
     handler = spec["handler"]
     try:
         result = handler(arguments or {})
@@ -952,7 +1014,7 @@ def handle(message: dict) -> dict | None:
                         "description": spec["description"],
                         "inputSchema": spec["inputSchema"],
                     }
-                    for spec in TOOLS
+                    for spec in visible_tools()
                 ]
             },
         }
@@ -1154,6 +1216,35 @@ def selftest() -> dict:
     else:
         _check(checks, "screen-lock", "warn", "lock state is unknown", "org.gnome.ScreenSaver.GetActive did not answer")
 
+    unlock_state = cu_unlock.status()
+    if unlock_state["unlock_policy"] == "off":
+        _check(
+            checks,
+            "unlock-policy",
+            "ok",
+            "AI unlocking is switched off (the default)",
+            "while the session is locked, input tools refuse to type; screenshots still work",
+            "switch it on with: settings.json {\"unlock\": \"keyring\"} after storing a password",
+        )
+    elif unlock_state["password_stored"]:
+        _check(
+            checks,
+            "unlock-policy",
+            "ok",
+            "AI unlocking is on; a password is stored in the keyring",
+            "the lock screen now stops a person at the keyboard, not software running as you",
+            "turn it off with: --unlock-policy off",
+        )
+    else:
+        _check(
+            checks,
+            "unlock-policy",
+            "warn",
+            "AI unlocking is on but no password is stored",
+            "unlock_screen will fail until a password is stored",
+            "run: linux_desktop_mcp.py --set-unlock-password",
+        )
+
     token_path = cu_display.ScreencastSession.token_path() if hasattr(cu_display.ScreencastSession, "token_path") else None
     has_token = bool(cu_display.ScreencastSession.load_token())
     if has_token:
@@ -1198,7 +1289,42 @@ def selftest() -> dict:
     }
 
 
+def _cli_unlock(args: list[str]) -> int | None:
+    """Handle the unlock-related command line switches. Returns an exit code or None."""
+    if "--set-unlock-password" in args:
+        try:
+            print(cu_unlock.prompt_and_store())
+        except cu_unlock.UnlockError as error:
+            print(f"error: {error}", file=sys.stderr)
+            return 1
+        return 0
+    if "--clear-unlock-password" in args:
+        removed = cu_unlock.clear_password()
+        print("cleared the stored unlock password" if removed else "no unlock password was stored")
+        return 0
+    if "--unlock-status" in args:
+        print(json.dumps(cu_unlock.status(), indent=2, ensure_ascii=False))
+        return 0
+    if "--unlock-policy" in args:
+        position = args.index("--unlock-policy")
+        value = args[position + 1] if position + 1 < len(args) else ""
+        if not value or value.startswith("-"):
+            print("usage: --unlock-policy off|keyring", file=sys.stderr)
+            return 2
+        try:
+            chosen = cu_unlock.set_policy(value)
+        except cu_unlock.UnlockError as error:
+            print(f"error: {error}", file=sys.stderr)
+            return 2
+        print(f"unlock policy: {chosen}")
+        return 0
+    return None
+
+
 def main() -> int:
+    unlock_exit = _cli_unlock(sys.argv[1:])
+    if unlock_exit is not None:
+        return unlock_exit
     if "--selftest" in sys.argv[1:]:
         print(json.dumps(selftest(), indent=2, ensure_ascii=False))
         return 0

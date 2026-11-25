@@ -50,6 +50,7 @@ reload the page. `linux_mcp_doctor` works either way.
 | Keyboard | `key` (`ctrl+shift+t`), `type_text` (Unicode via clipboard paste) |
 | Clipboard | `clipboard_get`, `clipboard_set` |
 | System | `process_list`, `process_kill`, `launch_app`, `settings_get`, `settings_set`, `settings_list_keys`, `notify`, `window_list`, `display_info`, `desktop_status` |
+| Unlocking (opt-in) | `unlock_screen` — only listed while the unlock policy is on; see below |
 
 Coordinates are **logical desktop pixels**. Pass `space: "screenshot"` to give
 coordinates in the pixels of the most recent screenshot instead; on a HiDPI
@@ -68,6 +69,33 @@ display those differ, and the tool converts for you.
   a11y bus; results are cached for a few seconds.
 * `type_text` falls back to clipboard-paste for characters the key table cannot
   type, which briefly overwrites the clipboard.
+
+## Lock state and the opt-in unlock switch
+
+While the session is locked, every input tool refuses to run: the lock screen
+keeps the password field focused, so injected keystrokes would land inside it.
+Screenshots keep working. `desktop_status` reports `session.locked`.
+
+Unlocking is **off by default**. While it is off, the `unlock_screen` tool is not
+listed at all — the model does not learn the capability exists. To switch it on,
+store a password in the GNOME keyring from your own terminal:
+
+```bash
+python3 -u ~/.local/share/dsh-linux-computer-use/linux_desktop_mcp.py --set-unlock-password
+python3 -u ~/.local/share/dsh-linux-computer-use/linux_desktop_mcp.py --unlock-status
+python3 -u ~/.local/share/dsh-linux-computer-use/linux_desktop_mcp.py --unlock-policy off
+```
+
+The password lives in libsecret (never in a chat, a config file or the log), is
+read only at the moment `unlock_screen` runs, and is dropped immediately after
+typing. The call also has to carry `confirm: "unlock"`; it is the single
+sanctioned exception to the lock-screen guard, and every other tool still
+refuses while the screen is locked.
+
+Switching it on means the lock screen stops a person at the keyboard, not
+software running as you: any process of yours can read the keyring item. That
+is why the default is off and why turning it back off afterwards is worth the
+ten seconds.
 
 ## Security
 

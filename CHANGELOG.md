@@ -18,5 +18,11 @@ First release.
   with `ydotool` as the fallback backend.
 - Refuses pointer/keyboard injection while the session is locked (screenshots keep working),
   and reports `session.locked` in `desktop_status`.
+- Opt-in AI unlocking, **off by default**: with the default policy the `unlock_screen` tool is
+  not listed at all. When switched on, the password is stored in the GNOME keyring from the
+  user's own terminal (`--set-unlock-password`), read only at the moment of the call, never
+  written to the conversation, a config file or the log; the call must pass `confirm: "unlock"`
+  and is the only exception to the lock-screen guard. Managed with
+  `--unlock-policy off|keyring`, `--unlock-status`, `--clear-unlock-password`.
 - Ships disabled: Computer Use is turned on in Settings → Plugins.
 - `linux-computer-use-prep.sh`: idempotent sudo setup with `--verify` and `--uninstall`.
