@@ -32,7 +32,7 @@
     "locale/*.json",
     "docs",
     "icon.svg",
-    "server",
+    "server/*.py",
     "linux-computer-use-prep.sh",
     "README.md",
     "LICENSE",

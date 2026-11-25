@@ -67,6 +67,14 @@ sudo ./linux-computer-use-prep.sh --verify   # 不需要 sudo
 - 缓解：MCP 桥接默认 `disabled`；`/dev/uinput` 只对 `input` 组开放；`ydotoold` socket 0600；所有工具调用走 DSH 的审批体系。
 - 日志在 `~/.cache/dsh-linux-cu/server.log`（超 1 MB 轮转）。不联网、不上报、不含遥测。
 
+## 无人值守与锁屏
+
+锁屏是这台机器的安全基线，插件不试图绕过它：`/dev/uinput` 注入的是真实内核输入事件，在锁屏界面上它与物理键盘没有区别——正因为如此，锁屏时插件拒绝一切注入。
+
+- **锁屏时能做**：截图（画面是锁屏本身，通常没用）、读文件、跑命令、写代码、git / npm 等一切非 GUI 工作。
+- **锁屏时不能做**：点击、拖拽、滚轮、按键、输入文字、UI 树操作。`desktop_status` 的 `session.locked` 和 `linux_mcp_doctor` 的 `screen-lock` 项会告诉你当前状态。
+- **想让"人不在场"也能做 GUI 任务**，干净的方向是给自动化一块**独立的虚拟显示器**（`org.gnome.Mutter.RemoteDesktop` 的 virtual monitor，GNOME 46 起可用），由 RemoteDesktop 接口往虚拟屏注入，物理屏保持锁定、你的桌面不被共享。这条路尚未实现，属于后续计划；不会走"关掉自动锁屏"或"存一份登录密码"这两条捷径。
+
 ## 故障排查
 
 ```bash
