@@ -1,7 +1,7 @@
 {
   "meta": {
-    "title": "Linux 桌面控制 (Computer Use)",
-    "description": "在 Wayland 桌面上截屏、读 UI 树、点鼠标、敲键盘、读写剪贴板、看进程、改系统设置——28 个工具，默认关闭。",
+    "title": "Ubuntu 桌面自动化 (Computer Use)",
+    "description": "在 Ubuntu / GNOME Wayland 桌面上截屏、读 UI 树、点鼠标、敲键盘、读写剪贴板、看进程、改系统设置——28 个工具，默认关闭。",
     "detail": "docs/DETAIL.md"
   }
 }

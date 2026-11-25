@@ -1,6 +1,6 @@
 # dsh-plugin-linux-computer-use
 
-**Computer Use for a Linux desktop (Wayland/GNOME), bridged into DeepSeek Harness as MCP tools.**
+**Computer Use for Ubuntu / GNOME Wayland, bridged into DeepSeek Harness as MCP tools.**
 
 给 DeepSeek Harness 装上"手和眼睛"：截屏、UI 树、鼠标键盘、剪贴板、进程、系统设置，全部以 `mcp__linux__*` 工具暴露给模型；外带一个 `linux_mcp_doctor` 诊断工具。**默认关闭**，在插件面板里手动打开。
 
@@ -47,7 +47,7 @@ sudo ./linux-computer-use-prep.sh --verify   # 不需要 sudo
 
 ## 打开
 
-设置 → 插件 → **Linux 桌面控制 (Computer Use)** → 打开开关 → 刷新页面。
+设置 → 插件 → **Ubuntu 桌面自动化 (Computer Use)** → 打开开关 → 刷新页面。
 
 开着插件但没开 Computer Use 时也可以先跑 `linux_mcp_doctor`（不需要 MCP 在线），它会逐项告诉你缺什么、怎么补。
 

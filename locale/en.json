@@ -1,7 +1,7 @@
 {
   "meta": {
-    "title": "Linux Desktop Control (Computer Use)",
-    "description": "Screenshot, read the UI tree, click, type, use the clipboard, inspect processes and change settings on a Wayland desktop - 28 tools, off by default.",
+    "title": "Ubuntu Desktop Automation (Computer Use)",
+    "description": "Screenshot, read the UI tree, click, type, use the clipboard, inspect processes and change settings on an Ubuntu / GNOME Wayland desktop - 28 tools, off by default.",
     "detail": "docs/DETAIL.md"
   }
 }

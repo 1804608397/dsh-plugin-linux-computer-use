@@ -1,4 +1,4 @@
-# Linux Desktop Control (Computer Use)
+# Ubuntu Desktop Automation (Computer Use)
 
 Gives the agent eyes and hands on a **Wayland GNOME** desktop: it can look at the
 screen, walk the accessibility tree of a window, move the pointer, click, type,
@@ -35,7 +35,7 @@ idempotent and has `--uninstall`.
 
 Computer Use ships **disabled**: enabling it lets the agent move your real
 pointer and type on your real keyboard, so it is not something to switch on by
-accident. Turn it on in **Settings → Plugins → Linux Desktop Control**, then
+accident. Turn it on in **Settings → Plugins → Ubuntu Desktop Automation**, then
 reload the page. `linux_mcp_doctor` works either way.
 
 ## Tools (`mcp__linux__*`)
