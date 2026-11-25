@@ -1,0 +1,35 @@
+# Linux Computer Use bundle.
+#
+# Two entries:
+#   1. linux-computer-use-mcp   - the MCP client that spawns the local stdio
+#      server and publishes its 28 tools as mcp__linux__*. It ships DISABLED
+#      (Computer Use is off by default); turn it on in Settings -> Plugins.
+#   2. linux-computer-use-doctor - the linux_mcp_doctor host tool. It stays
+#      available even while the MCP entry is off, so diagnosis works before
+#      anything is enabled.
+#
+# The command is a fixed launcher path, not this package's own directory: a
+# published package lands wherever the profile puts it, so linux-computer-use-prep.sh
+# installs /usr/local/bin/dsh-linux-desktop-mcp, which execs the server copy the
+# bundle syncs to ~/.local/share/dsh-linux-computer-use on every load.
+- insert:
+    - id: linux-computer-use-mcp
+      name: '@deepseek-ai/dsh-mcp-client'
+      disabled: true
+      config:
+        serverName: linux
+        transport: stdio
+        command: /usr/local/bin/dsh-linux-desktop-mcp
+        args: []
+        toolCallTimeoutMs: 180000
+        startupTimeoutMs: 30000
+        failOnStartupError: false
+        reconnect:
+          enabled: true
+          initialDelayMs: 500
+          maxDelayMs: 10000
+          maxAttempts: 5
+    - id: linux-computer-use-doctor
+      name: dsh-plugin-linux-computer-use
+      config:
+        python: /usr/bin/python3

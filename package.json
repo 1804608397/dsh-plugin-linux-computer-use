@@ -1,0 +1,49 @@
+{
+  "name": "dsh-plugin-linux-computer-use",
+  "version": "0.1.0",
+  "description": "Computer Use for a Wayland Linux desktop in DeepSeek Harness: screenshots, UI tree, pointer and keyboard input, clipboard, processes and settings, bridged as mcp__linux__* tools. · 让 DSH 接管 Ubuntu/GNOME 桌面：截屏、UI 树、鼠标键盘、剪贴板、进程与系统设置。",
+  "type": "module",
+  "license": "MIT",
+  "keywords": [
+    "deepseek-harness",
+    "dsh",
+    "dsh-plugin",
+    "computer-use",
+    "desktop-automation",
+    "mcp",
+    "wayland",
+    "gnome",
+    "at-spi",
+    "uinput"
+  ],
+  "exports": {
+    ".": "./index.js",
+    "./locale/*.json": "./locale/*.json",
+    "./icon": "./icon.svg"
+  },
+  "files": [
+    "index.js",
+    "cordis.patch.yml",
+    "locale/*.json",
+    "docs",
+    "icon.svg",
+    "server",
+    "linux-computer-use-prep.sh",
+    "README.md",
+    "LICENSE",
+    "CHANGELOG.md"
+  ],
+  "scripts": {
+    "selftest": "python3 -u server/linux_desktop_mcp.py --selftest",
+    "status": "python3 -u server/linux_desktop_mcp.py --status",
+    "check": "node --check index.js && python3 -m py_compile server/*.py && npm pack --dry-run"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  }
+}
