@@ -256,6 +256,21 @@ class UinputBackend:
     def available(cls, uinput_path: str = DEFAULT_UINPUT) -> bool:
         return os.access(uinput_path, os.R_OK | os.W_OK)
 
+    def reset(self) -> None:
+        """Drop every uinput device so the next call recreates them.
+
+        Useful after a compositor restart: mutter can stop honouring a
+        virtual pointer that was created before the session restarted.
+        """
+        for attribute in ("_pointer", "_wheel", "_keyboard"):
+            device = getattr(self, attribute, None)
+            if device is not None:
+                try:
+                    device.close()
+                except Exception:  # noqa: BLE001
+                    pass
+                setattr(self, attribute, None)
+
     # -- devices ----------------------------------------------------------- #
     def pointer(self) -> UinputDevice:
         if self._pointer is None:
@@ -458,6 +473,12 @@ class InputController:
     @property
     def backend_name(self) -> str:
         return "uinput" if isinstance(self.backend, UinputBackend) else "ydotool"
+
+    def reset_input(self) -> None:
+        """Recreate the injection devices (used after a session restart)."""
+        reset = getattr(self.backend, "reset", None)
+        if reset is not None:
+            reset()
 
     # -- pointer ----------------------------------------------------------- #
     def move(self, x: int, y: int) -> None:

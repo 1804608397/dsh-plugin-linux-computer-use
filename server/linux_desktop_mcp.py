@@ -487,8 +487,11 @@ def tool_desktop_status(args: dict) -> dict:
     except cu_display.PortalError as error:
         status["display"] = {"error": str(error)}
     try:
-        backend = controller().backend_name
-        status["input"] = {"backend": backend, "ready": True}
+        active = controller()
+        if args.get("reset_input"):
+            active.reset_input()
+            status["input_reset"] = True
+        status["input"] = {"backend": active.backend_name, "ready": True}
     except Exception as error:  # noqa: BLE001
         status["input"] = {"ready": False, "error": str(error)}
     token = cu_display.ScreencastSession.load_token()
@@ -898,7 +901,19 @@ TOOLS: list[dict] = [
             "Self-check of the desktop server: input backend, capture permission token, "
             "accessibility reachability and optional helper binaries."
         ),
-        "inputSchema": {"type": "object", "properties": {}},
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "reset_input": {
+                    "type": "boolean",
+                    "description": (
+                        "Recreate the virtual input devices before reporting. Use it after the "
+                        "desktop session restarted (log out and back in): the compositor can stop "
+                        "honouring pointer devices that were created before the restart."
+                    ),
+                },
+            },
+        },
         "handler": tool_desktop_status,
     },
 ]

@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased
+
+- `desktop_status` gained `reset_input`, which recreates the virtual keyboard,
+  pointer and wheel devices. The compositor can stop honouring devices that
+  were created before the desktop session restarted, and this is the cheapest
+  way to recover without restarting the server.
+- The accessibility tree no longer takes the whole server down when AT-SPI is
+  unreachable: the reachability test runs in a throwaway child process, so a
+  dead accessibility bus turns into a normal tool error instead of a crash.
+  Logging out and back in while the server keeps running is exactly the case
+  that used to kill it.
+
 ## 0.1.0
 
 First release.

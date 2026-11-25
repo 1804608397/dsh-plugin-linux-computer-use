@@ -28,6 +28,33 @@ STATE_FLAGS = (
 )
 
 
+_PROBE_CACHE: "list[bool]" = []
+
+
+def a11y_reachable() -> bool:
+    """True when Atspi.init() can run without aborting this process.
+
+    libatspi calls g_error() when it cannot reach the accessibility bus, which
+    kills the whole process instead of raising. The only safe test is to try it
+    in a throwaway child, so do that once and cache the answer.
+    """
+    if _PROBE_CACHE:
+        return _PROBE_CACHE[0]
+    code = (
+        "import gi;gi.require_version('Atspi','2.0');"
+        "from gi.repository import Atspi;Atspi.init();print('ok')"
+    )
+    try:
+        proc = subprocess.run(
+            [sys.executable, "-c", code], capture_output=True, timeout=20, check=False
+        )
+        ok = proc.returncode == 0 and b"ok" in proc.stdout
+    except Exception:  # noqa: BLE001
+        ok = False
+    _PROBE_CACHE.append(ok)
+    return ok
+
+
 class A11yError(RuntimeError):
     """The accessibility tree could not be read or the element is gone."""
 
@@ -120,6 +147,16 @@ class A11y:
     def start(self) -> None:
         if self._started:
             return
+        # libatspi aborts the whole process (dbind-ERROR) when the session bus
+        # is gone, which is exactly what happens after the user logs out and
+        # back in while this server keeps running. Check first so the tools can
+        # report a fixable error instead of the server dying.
+        if not a11y_reachable():
+            raise A11yError(
+                "the accessibility bus is unreachable: this server has no working "
+                "session D-Bus connection. Restart the app that launched it (dsh web) "
+                "from a terminal in the current desktop session."
+            )
         try:
             # Tighten the D-Bus timeouts used for tree queries: one hung
             # application must not stall a whole snapshot. 1s is far above the
