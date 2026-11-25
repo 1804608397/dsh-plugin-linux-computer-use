@@ -77,6 +77,29 @@ function check(list, id, status, title, detail, fix) {
   list.push(entry)
 }
 
+/**
+ * Is this account listed in the `input` group, per /etc/group?
+ *
+ * Reading the group database instead of process credentials is deliberate:
+ * a long running host keeps the group list it was started with, so the two can
+ * disagree for as long as the host stays up. The launcher bridges that gap with
+ * `sg input`, which means group membership in the database is what matters.
+ */
+function inInputGroup() {
+  try {
+    const user = process.env.USER || process.env.LOGNAME || ''
+    for (const line of readFileSync('/etc/group', 'utf8').split('\n')) {
+      const fields = line.split(':')
+      if (fields[0] !== 'input') continue
+      const members = (fields[3] || '').split(',').map((name) => name.trim())
+      return user && members.includes(user) ? user : false
+    }
+  } catch {
+    /* /etc/group unreadable: fall through to the plain path */
+  }
+  return false
+}
+
 /** Run the server's own --selftest and parse its JSON report. */
 function runSelftest(python, script) {
   return new Promise((resolve) => {
@@ -248,18 +271,32 @@ function createDoctor(tools, python, sync) {
         accessSync('/dev/uinput', fsConstants.R_OK | fsConstants.W_OK)
         check(checks, 'uinput', 'ok', '/dev/uinput is writable by this account')
       } catch (error) {
-        const detail =
-          error?.code === 'ENOENT'
-            ? '/dev/uinput does not exist on this machine (kernel built without CONFIG_INPUT_UINPUT?)'
-            : '/dev/uinput exists but this account cannot open it for writing'
-        check(
-          checks,
-          'uinput',
-          'fail',
-          'pointer and keyboard injection cannot work',
-          detail,
-          'sudo ./linux-computer-use-prep.sh, then log out and back in so the "input" group applies',
-        )
+        const member = inInputGroup()
+        if (error?.code !== 'ENOENT' && member) {
+          // This process predates the group change (a long running DSH host, or a
+          // lingering systemd --user manager). The launcher re-execs through
+          // `sg input`, so injection still works - only our own view is stale.
+          check(
+            checks,
+            'uinput',
+            'ok',
+            `${member} is in the "input" group; the launcher re-execs through sg so injection works`,
+            '/dev/uinput is not readable from this long running process yet',
+          )
+        } else {
+          const detail =
+            error?.code === 'ENOENT'
+              ? '/dev/uinput does not exist on this machine (kernel built without CONFIG_INPUT_UINPUT?)'
+              : '/dev/uinput exists but this account cannot open it for writing'
+          check(
+            checks,
+            'uinput',
+            'fail',
+            'pointer and keyboard injection cannot work',
+            detail,
+            'sudo ./linux-computer-use-prep.sh, then log out and back in so the "input" group applies',
+          )
+        }
       }
 
       const selftest = await runSelftest(python, script)

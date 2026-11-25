@@ -43,7 +43,7 @@ sudo ./linux-computer-use-prep.sh --verify   # 不需要 sudo
 3. 装 `wl-clipboard`（必需）和 `ydotool`（可选兜底；Ubuntu 24.04 的 ydotool 包里没有 `ydotoold` 守护进程，所以兜底路径默认不可用——主路径 `/dev/uinput` 不依赖它）；
 4. 装一个固定路径启动器 `/usr/local/bin/dsh-linux-desktop-mcp`。
 
-改完组之后**必须注销重登**，并且**重启启动服务器的那个进程**（比如 `dsh web`）：长驻进程保留它启动时的组列表，光重登不重启仍然是 `operation not permitted`。
+改完组之后**不需要注销**：启动器会在发现自己拿不到 `/dev/uinput` 时用 `sg input` 重新 exec 一次（不需要密码），所以哪怕宿主进程是很久以前启动的、哪怕 `systemd --user` 因为 `Linger=yes` 一直没重启，注入依然可用。注销重登只是让 `id` 显示得漂亮些，不是必需步骤。
 
 ## 打开
 

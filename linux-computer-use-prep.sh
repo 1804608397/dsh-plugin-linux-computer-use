@@ -227,11 +227,25 @@ cat > "$LAUNCHER" <<'LAUNCH'
 # Installed by dsh-plugin-linux-computer-use.
 # Launches the bundle's stdio MCP server from the copy it syncs under the
 # user's home, so the cordis patch never has to hard-code a package path.
+#
+# If the process that spawned us predates the 'input' group change (a long
+# running DSH host, or a lingering systemd --user manager), our own group list
+# is stale and /dev/uinput stays out of reach. `sg input` re-execs with a fresh
+# group list without needing a password, so injection keeps working.
 DIR="${DSH_LINUX_CU_DIR:-$HOME/.local/share/dsh-linux-computer-use}"
+SELF="/usr/local/bin/dsh-linux-desktop-mcp"
 if [ ! -f "$DIR/linux_desktop_mcp.py" ]; then
   echo "dsh-linux-desktop-mcp: no server copy in $DIR" >&2
   echo "enable the plugin once (it syncs the server there), then retry" >&2
   exit 1
+fi
+if [ -z "${DSH_LINUX_CU_SG:-}" ] && [ "$#" -eq 0 ] \
+   && [ ! -w /dev/uinput ] \
+   && getent group input 2>/dev/null | awk -F: '{print $4}' | tr ',' '\n' \
+      | grep -qx "$(id -un)"; then
+  DSH_LINUX_CU_SG=1
+  export DSH_LINUX_CU_SG
+  exec sg input -c "exec \"$SELF\""
 fi
 exec /usr/bin/python3 -u "$DIR/linux_desktop_mcp.py" "$@"
 LAUNCH
