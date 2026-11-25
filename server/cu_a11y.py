@@ -15,6 +15,8 @@ unresponsive application must not hang the whole server.
 
 from __future__ import annotations
 
+import subprocess
+import sys
 import time
 
 import gi
@@ -38,6 +40,9 @@ def a11y_reachable() -> bool:
     kills the whole process instead of raising. The only safe test is to try it
     in a throwaway child, so do that once and cache the answer.
     """
+    # Only a positive result is cached: the accessibility bus starts a moment
+    # after the desktop session does, so a failure now can become a success a
+    # second later.
     if _PROBE_CACHE:
         return _PROBE_CACHE[0]
     code = (
@@ -51,7 +56,8 @@ def a11y_reachable() -> bool:
         ok = proc.returncode == 0 and b"ok" in proc.stdout
     except Exception:  # noqa: BLE001
         ok = False
-    _PROBE_CACHE.append(ok)
+    if ok:
+        _PROBE_CACHE.append(True)
     return ok
 
 
