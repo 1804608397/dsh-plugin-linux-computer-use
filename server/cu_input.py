@@ -187,7 +187,10 @@ class UinputDevice:
     def enable_abs(self, code: int, minimum: int, maximum: int) -> "UinputDevice":
         fcntl.ioctl(self.fd, UI_SET_ABSBIT, code)
         # struct uinput_abs_setup { __u16 code; __u16 pad; struct input_absinfo; }
-        payload = struct.pack("HHiiiii", code, 0, 0, minimum, maximum, 0, 0)
+        # input_absinfo carries six ints (value, min, max, fuzz, flat, resolution);
+        # leaving one out makes libinput drop the device with "kernel has only x or
+        # y resolution, not both".
+        payload = struct.pack("HHiiiiii", code, 0, 0, minimum, maximum, 0, 0, 0)
         fcntl.ioctl(self.fd, UI_ABS_SETUP, payload)
         return self
 
