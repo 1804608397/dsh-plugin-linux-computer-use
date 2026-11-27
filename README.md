@@ -1,7 +1,7 @@
 # dsh-plugin-linux-computer-use
 
 [![npm](https://img.shields.io/npm/v/dsh-plugin-linux-computer-use.svg)](https://www.npmjs.com/package/dsh-plugin-linux-computer-use)
-[![GitHub release](https://img.shields.io/github/v/release/1804608397/dsh-plugin-linux-computer-use.svg)](https://github.com/1804608397/dsh-plugin-linux-computer-use/releases)
+[![GitHub release](https://img.shields.io/github/v/release/BeiningCheng/dsh-plugin-linux-computer-use.svg)](https://github.com/BeiningCheng/dsh-plugin-linux-computer-use/releases)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 **Computer Use for Ubuntu / GNOME Wayland, bridged into DeepSeek Harness as MCP tools.**
