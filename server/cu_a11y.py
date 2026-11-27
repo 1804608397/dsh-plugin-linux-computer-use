@@ -65,6 +65,11 @@ class A11yError(RuntimeError):
     """The accessibility tree could not be read or the element is gone."""
 
 
+def _count_nodes(node: dict) -> int:
+    """How many nodes this subtree actually carries (after filtering)."""
+    return 1 + sum(_count_nodes(child) for child in node.get("children", []))
+
+
 def _state_names(acc) -> list[str]:
     try:
         state_set = acc.get_state_set()
@@ -262,7 +267,8 @@ class A11y:
         return None
 
     # -- snapshot ---------------------------------------------------------- #
-    def node(self, acc, depth: int, budget: dict, deadline: float) -> dict | None:
+    def node(self, acc, depth: int, budget: dict, deadline: float,
+             wanted_roles: set | None = None, compact: bool = False) -> dict | None:
         if budget["nodes"] <= 0 or time.monotonic() > deadline:
             budget["truncated"] = True
             return None
@@ -272,40 +278,57 @@ class A11y:
             name = acc.get_name() or ""
         except Exception:  # noqa: BLE001
             return None
-        item: dict = {"ref": self._ref(acc), "role": role}
-        if name:
-            item["name"] = name[:120]
         states = _state_names(acc)
-        if states:
-            item["states"] = states
-        rect = _extents(acc)
-        if rect:
-            item["rect"] = rect
-        actions = _actions(acc)
-        if actions:
-            item["actions"] = actions
-        text = _text_preview(acc)
-        if text:
-            item["text"] = text
+        if "defunct" in states:
+            # A dead application still answers AT-SPI; walking it wastes the budget.
+            return None
+        children: list[dict] = []
         if depth > 0:
-            children = []
             try:
                 count = acc.get_child_count()
             except Exception:  # noqa: BLE001
                 count = 0
             for index in range(count):
-                child = self.node(acc.get_child_at_index(index), depth - 1, budget, deadline)
+                child = self.node(acc.get_child_at_index(index), depth - 1, budget, deadline,
+                                  wanted_roles, compact)
                 if child is None:
                     if budget["truncated"]:
                         break
                     continue
                 children.append(child)
-            if children:
-                item["children"] = children
+        matched = True
+        if wanted_roles is not None:
+            lowered = role.lower()
+            matched = any(needle in lowered for needle in wanted_roles)
+        if not matched and not children:
+            # Nothing here and nothing below is interesting: drop the node.
+            return None
+        item: dict = {"ref": self._ref(acc), "role": role}
+        if name:
+            item["name"] = name[:120]
+        if matched and not compact:
+            if states:
+                item["states"] = states
+            rect = _extents(acc)
+            if rect:
+                item["rect"] = rect
+            actions = _actions(acc)
+            if actions:
+                item["actions"] = actions
+            text = _text_preview(acc)
+            if text:
+                item["text"] = text
+        elif matched and compact:
+            actions = _actions(acc)
+            if actions:
+                item["actions"] = actions
+        if children:
+            item["children"] = children
         return item
 
     def snapshot(self, app: str | None = None, max_depth: int = 3,
-                 max_nodes: int = 220, timeout_s: float = 20.0) -> dict:
+                 max_nodes: int = 220, timeout_s: float = 20.0,
+                 roles: list[str] | None = None, compact: bool = False) -> dict:
         self.start()
         deadline = time.monotonic() + timeout_s
         budget = {"nodes": max_nodes, "truncated": False}
@@ -321,17 +344,21 @@ class A11y:
                 target = self._apps.get(item["name"])
                 if target is not None:
                     roots.append((target, item["name"]))
+        wanted_roles = {item.lower() for item in roles} if roles else None
         tree = []
         for root, label in roots:
-            node = self.node(root, max_depth, budget, deadline)
+            node = self.node(root, max_depth, budget, deadline, wanted_roles, compact)
             if node is not None:
                 node.setdefault("name", label)
                 node["app"] = label
                 tree.append(node)
+        emitted = sum(_count_nodes(item) for item in tree)
+
         return {
             "applications": tree,
             "truncated": bool(budget["truncated"]),
             "nodes_used": max_nodes - max(0, budget["nodes"]),
+            "nodes_returned": emitted,
         }
 
     # -- search ------------------------------------------------------------ #

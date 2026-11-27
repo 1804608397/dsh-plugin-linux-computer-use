@@ -19,6 +19,7 @@ import {
   mkdirSync,
   readdirSync,
   readFileSync,
+  writeFileSync,
 } from 'node:fs'
 import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
@@ -58,6 +59,11 @@ function syncServerFiles() {
       copyFileSync(from, to)
       copied.push(name)
     }
+    // Leave a breadcrumb so the installed copy can refresh itself even when
+    // only the MCP entry is toggled (that entry never re-runs this function).
+    try {
+      writeFileSync(join(INSTALL_DIR, '.source'), `${source}\n`, { mode: 0o600 })
+    } catch {}
     return { ok: true, dir: INSTALL_DIR, copied }
   } catch (error) {
     return { ok: false, dir: INSTALL_DIR, detail: error?.message ?? String(error), copied }

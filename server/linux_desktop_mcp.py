@@ -32,6 +32,7 @@ from __future__ import annotations
 import base64
 import json
 import os
+import shutil
 import subprocess
 import sys
 import time
@@ -46,7 +47,7 @@ import cu_sys  # noqa: E402
 import cu_unlock  # noqa: E402
 
 SERVER_NAME = "linux-desktop-mcp"
-SERVER_VERSION = "1.2.0"
+SERVER_VERSION = "1.3.0"
 PROTOCOL_VERSION = "2025-06-18"
 SUPPORTED_PROTOCOLS = {"2024-11-05", "2025-03-26", "2025-06-18"}
 LOG_PATH = os.path.join(cu_display.CACHE_DIR, "server.log")
@@ -349,7 +350,15 @@ def tool_ui_tree(args: dict) -> dict:
     app = args.get("app")
     depth = max(1, min(int(args.get("max_depth", 3)), 8))
     nodes = max(10, min(int(args.get("max_nodes", 220)), 1200))
-    snapshot = A11Y.snapshot(app=app, max_depth=depth, max_nodes=nodes)
+    roles = args.get("roles")
+    if isinstance(roles, str):
+        roles = [roles]
+    if roles is not None and not isinstance(roles, list):
+        raise ToolError("roles must be a list of role name fragments, e.g. [\"push button\", \"entry\"]")
+    compact = bool(args.get("compact", False))
+    snapshot = A11Y.snapshot(app=app, max_depth=depth, max_nodes=nodes,
+                             roles=[str(item) for item in roles] if roles else None,
+                             compact=compact)
     if snapshot["nodes_used"] <= 3 and snapshot["applications"]:
         snapshot["hint"] = (
             "the application exposes (almost) no accessibility nodes: Chromium, "
@@ -1084,8 +1093,10 @@ TOOLS: list[dict] = [
         "name": "ui_tree",
         "description": (
             "Read the accessibility tree of one application (or a few) as nested role/name/rect/"
-            "action nodes. Bounded by max_depth and max_nodes. Chromium/Electron/Qt apps usually "
-            "expose almost nothing; use screenshot for those."
+            "action nodes. Bounded by max_depth and max_nodes. Pass roles to keep only interesting "
+            "kinds of node (ancestors collapse to a bare ref/role/name path), and compact to drop "
+            "rect/states/text: a filtered compact tree is often 10x cheaper than the full one. "
+            "Chromium/Electron/Qt apps usually expose almost nothing; use screenshot for those."
         ),
         "inputSchema": {
             "type": "object",
@@ -1093,6 +1104,19 @@ TOOLS: list[dict] = [
                 "app": {"type": "string", "description": "Application name as shown by ui_apps (substring match)."},
                 "max_depth": {"type": "integer", "default": 3, "minimum": 1, "maximum": 8},
                 "max_nodes": {"type": "integer", "default": 220, "minimum": 10, "maximum": 1200},
+                "roles": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": (
+                        "Keep only nodes whose role contains one of these fragments, e.g. "
+                        "[\"push button\", \"entry\", \"menu item\"]. Case-insensitive."
+                    ),
+                },
+                "compact": {
+                    "type": "boolean",
+                    "default": False,
+                    "description": "Drop rect, states and text previews; keep ref, role, name and actions.",
+                },
             },
         },
         "handler": tool_ui_tree,
@@ -1624,6 +1648,129 @@ def _portal_screencast_version() -> int | None:
         return None
 
 
+def _gsettings_list(schema: str, key: str) -> list[str] | None:
+    """Read a list-valued gsettings key ("['<Super>Tab', '<Alt>Tab']")."""
+    try:
+        result = subprocess.run(
+            ["gsettings", "get", schema, key],
+            capture_output=True, text=True, timeout=4.0, check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if result.returncode != 0:
+        return None
+    raw = result.stdout.strip()
+    if not raw.startswith("[") or not raw.endswith("]"):
+        return None
+    inner = raw[1:-1].strip()
+    if not inner:
+        return []
+    return [part.strip().strip("'\"") for part in inner.split(",")]
+
+
+def _keybinding_checks(checks: list) -> None:
+    """Explain which window-switch shortcut window_activate can actually use."""
+    schema = "org.gnome.desktop.wm.keybindings"
+    windows = _gsettings_list(schema, "switch-windows")
+    apps = _gsettings_list(schema, "switch-applications")
+    if windows is None and apps is None:
+        _check(
+            checks,
+            "keybindings",
+            "warn",
+            "window-switch keybindings are unreadable",
+            "gsettings did not answer; window_activate can still raise XWayland windows",
+            "install libglib2.0-bin (gsettings) to make the keyboard fallback verifiable",
+        )
+        return
+    windows = windows or []
+    apps = apps or []
+    has_alt = any("Alt" in item and "Tab" in item for item in windows)
+    has_super = any("Super" in item and "Tab" in item for item in apps)
+    if has_alt and has_super:
+        _check(
+            checks,
+            "keybindings",
+            "ok",
+            "both window-switch shortcuts are bound",
+            "Alt+Tab switches windows of one application, Super+Tab switches applications",
+        )
+    elif has_super:
+        _check(
+            checks,
+            "keybindings",
+            "ok",
+            "Super+Tab is bound to switch applications",
+            "Alt+Tab is not bound, so window_activate goes straight to Super+Tab",
+        )
+    elif has_alt:
+        _check(
+            checks,
+            "keybindings",
+            "warn",
+            "only Alt+Tab is bound",
+            "Alt+Tab switches windows inside the current application, so raising another application's window may fail",
+            "add a Super+Tab binding to switch-applications, or drag the window forward by hand",
+        )
+    else:
+        _check(
+            checks,
+            "keybindings",
+            "warn",
+            "no window-switch shortcut is bound",
+            "window_activate can only rely on xdotool and the accessibility default action",
+            "bind switch-windows to <Alt>Tab in Settings -> Keyboard -> View and Customise Shortcuts",
+        )
+
+
+def _sync_check(checks: list) -> None:
+    """Report whether this running copy is in step with the installed package."""
+    if not os.path.exists(SOURCE_POINTER):
+        _check(
+            checks,
+            "server-copy",
+            "warn",
+            "cannot tell which package this server copy came from",
+            f"{SOURCE_POINTER} is missing; the copy never refreshes itself",
+            "reinstall the bundle, or reload it from Settings -> Plugins",
+        )
+        return
+    try:
+        with open(SOURCE_POINTER, encoding="utf-8") as handle:
+            source = handle.read().strip()
+    except OSError as error:  # noqa: BLE001
+        _check(checks, "server-copy", "warn", "cannot read the package pointer", str(error))
+        return
+    fresh = os.path.join(source, "linux_desktop_mcp.py")
+    if not os.path.exists(fresh):
+        _check(
+            checks,
+            "server-copy",
+            "warn",
+            "the package this copy came from is gone",
+            source,
+            "reinstall the bundle; the copy now updates itself from the package on start",
+        )
+        return
+    ours = os.path.abspath(__file__)
+    try:
+        same = open(fresh, "rb").read() == open(ours, "rb").read()
+    except OSError as error:  # noqa: BLE001
+        _check(checks, "server-copy", "warn", "cannot compare server copies", str(error))
+        return
+    if same:
+        _check(checks, "server-copy", "ok", "this copy matches the installed package", source)
+    else:
+        _check(
+            checks,
+            "server-copy",
+            "warn",
+            "this copy differs from the installed package",
+            f"package: {fresh}",
+            "restart the MCP entry (or reload the bundle): the server refreshes itself on start",
+        )
+
+
 def selftest() -> dict:
     """Collect everything the doctor tool needs, without asking for permissions."""
     checks: list[dict] = []
@@ -1831,6 +1978,9 @@ def selftest() -> dict:
     except Exception as error:  # noqa: BLE001
         _check(checks, "a11y", "warn", "AT-SPI is unavailable", str(error), "check that org.a11y.Bus is running")
 
+    _keybinding_checks(checks)
+    _sync_check(checks)
+
     ok = not any(check["status"] == "fail" for check in checks)
     return {
         "ok": ok,
@@ -1871,7 +2021,64 @@ def _cli_unlock(args: list[str]) -> int | None:
     return None
 
 
+INSTALL_DIR = os.path.dirname(os.path.abspath(__file__))
+SOURCE_POINTER = os.path.join(INSTALL_DIR, ".source")
+SELF_UPDATE_FLAG = "DSH_LINUX_CU_SELF_UPDATED"
+
+
+def _self_update() -> None:
+    """Refresh this copy of the server from the installed package, then re-exec.
+
+    The bundle syncs server/*.py into a stable directory when the *doctor*
+    plugin loads, but the MCP server is started by a different patch entry, so
+    toggling only that entry (or upgrading the npm package) leaves a stale copy
+    behind. A pointer file records where the package lives; comparing against
+    it here makes the server heal itself before it serves a single request.
+    """
+    if os.environ.get(SELF_UPDATE_FLAG) == "1":
+        return
+    try:
+        with open(SOURCE_POINTER, encoding="utf-8") as handle:
+            source = handle.read().strip()
+    except OSError:
+        return
+    if not source or not os.path.isdir(source):
+        return
+    if os.path.realpath(source) == os.path.realpath(INSTALL_DIR):
+        return
+    if not os.path.exists(os.path.join(source, "linux_desktop_mcp.py")):
+        return
+    changed: list[str] = []
+    for name in sorted(os.listdir(source)):
+        if not name.endswith(".py"):
+            continue
+        fresh = os.path.join(source, name)
+        stale = os.path.join(INSTALL_DIR, name)
+        try:
+            with open(fresh, "rb") as mine, open(stale, "rb") as theirs:
+                if mine.read() == theirs.read():
+                    continue
+        except OSError:
+            pass
+        try:
+            shutil.copyfile(fresh, stale)
+            changed.append(name)
+        except OSError as error:  # noqa: BLE001
+            log(f"self-refresh could not copy {name}: {error}")
+    if not changed:
+        return
+    log(f"refreshed {len(changed)} server file(s) from {source}: {', '.join(changed)}")
+    env = dict(os.environ)
+    env[SELF_UPDATE_FLAG] = "1"
+    try:
+        os.execve(sys.executable, [sys.executable, os.path.abspath(__file__), *sys.argv[1:]], env)
+    except OSError as error:  # noqa: BLE001
+        log(f"self-refresh re-exec failed: {error}")
+
+
 def main() -> int:
+    # Serve (and diagnose) with the freshest copy of the code we can find.
+    _self_update()
     unlock_exit = _cli_unlock(sys.argv[1:])
     if unlock_exit is not None:
         return unlock_exit

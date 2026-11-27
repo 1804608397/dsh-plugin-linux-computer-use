@@ -59,6 +59,11 @@ sudo ./linux-computer-use-prep.sh --verify   # 不需要 sudo
 
 开着插件但没开 Computer Use 时也可以先跑 `linux_mcp_doctor`（不需要 MCP 在线），它会逐项告诉你缺什么、怎么补。
 
+## 省钱与提速的两招
+
+- **`ui_tree` 先过滤再读**：`roles: ["push button", "entry"]` 只保留你要的节点类型，祖先会折叠成 `ref`/`role`/`name` 的路径；再加 `compact: true` 去掉 rect/states/text。实测同一屏 140 节点/10.2 KB → 20 节点/0.85 KB。
+- **`screenshot` 用 `region` + `scale: 1.0`**：先在 4480×1440 原图上裁剪再缩放，小字才清楚，token 也只有整屏的三分之一。
+
 ## 已知限制（重要，别踩坑）
 
 - **Chromium / Electron / Qt 应用（Chrome、VS Code、微信、WPS、Bitwarden）暴露的 UI 树是空的**——这是平台事实，不是 bug。它们只能靠"截屏 + 坐标点击"，窗口一动就得重新截图。原生 GTK 应用用 `ui_find` + `ui_action` 很稳。
@@ -125,7 +130,7 @@ honouring its motion: keyboard and scroll still work, clicks do nothing.
 python3 -u ~/.local/share/dsh-linux-computer-use/linux_desktop_mcp.py --selftest
 ```
 
-或在对话里让模型调用 `linux_mcp_doctor`。逐项报告：会话类型、Python/GI/Atspi/Gst、`/dev/uinput`、启动器、wl-clipboard、portal 版本、pipewiresrc、截屏授权、显示器、AT-SPI 应用数。
+或在对话里让模型调用 `linux_mcp_doctor`。逐项报告：会话类型、Python/GI/Atspi/Gst、`/dev/uinput`、启动器、wl-clipboard、portal 版本、pipewiresrc、截屏授权、显示器、AT-SPI 应用数、**GNOME 窗口切换键位绑定**（Alt+Tab / Super+Tab 哪个有效），以及**正在运行的 server 副本是否与安装的包一致**。
 
 ## 兼容性
 
@@ -141,7 +146,7 @@ MIT
 
 ### English
 
-Linux desktop automation for DeepSeek Harness on Wayland. Screenshots go through the `xdg-desktop-portal` Screenshot interface (the only Wayland-legal path, ~0.5s per capture after one granted approval); pointer and keyboard input go straight to `/dev/uinput` so applications cannot tell them from a real user; the UI tree comes from AT-SPI2. 28 tools are published as `mcp__linux__*`, plus a `linux_mcp_doctor` host tool that diagnoses the environment even while the bridge is off. Ships disabled: enable it in Settings → Plugins.
+Linux desktop automation for DeepSeek Harness on Wayland. Screenshots go through the `xdg-desktop-portal` Screenshot interface (the only Wayland-legal path, ~0.5s per capture after one granted approval); pointer and keyboard input go straight to `/dev/uinput` so applications cannot tell them from a real user; the UI tree comes from AT-SPI2. 30 tools are published as `mcp__linux__*`, plus a `linux_mcp_doctor` host tool that diagnoses the environment even while the bridge is off. Ships disabled: enable it in Settings → Plugins.
 
 Install: `dsh plugin --profile web add dsh-plugin-linux-computer-use`, run `sudo ./linux-computer-use-prep.sh`, restart `dsh`, then flip the switch.
 

@@ -1,5 +1,30 @@
 # Changelog
 
+## 0.4.0 - 2026-11-27
+
+- **The server now refreshes itself.** The bundle copied `server/*.py` into
+  `~/.local/share/dsh-linux-computer-use` when the *doctor* plugin loaded, but
+  the MCP server is started by a separate patch entry: toggling only that entry
+  (the normal thing to do in Settings → Plugins) or upgrading the npm package
+  left a stale copy running, with no visible sign. The sync now also drops a
+  `.source` breadcrumb, and the server compares itself against that package
+  before doing anything, copies the newer files and re-executes — so a restart
+  is enough, and a stale code path can no longer survive one.
+- `linux_mcp_doctor` grew two preflight checks: `keybindings` (which of
+  Alt+Tab / Super+Tab are actually bound, because the keyboard fallback of
+  `window_activate` depends on it) and `server-copy` (whether the running copy
+  is in step with the installed package). Both also run from
+  `linux_desktop_mcp.py --selftest`.
+- `ui_tree` can now be pruned: pass `roles` (e.g. `["push button", "entry"]`)
+  to keep only the kinds of node you care about — ancestors collapse into a
+  bare `ref`/`role`/`name` path — and `compact` to drop rectangles, states and
+  text previews. Measured on this machine: 140 nodes / 10.2 KB → 20 nodes /
+  0.85 KB for the same screen, and filtered trees on a real application save
+  far more. The reply now reports `nodes_returned` next to `nodes_used`.
+- Defunct applications are no longer walked (they still answer AT-SPI and
+  quietly ate the node budget).
+- MCP server version 1.3.0.
+
 ## 0.3.0 - 2026-11-27
 
 - New `window_activate`: raise a window by title substring (or app name). Three
