@@ -8,7 +8,9 @@
   that honour it, and Alt+Tab cycling verified against the accessibility tree
   for native Wayland windows, which neither X11 nor AT-SPI can raise. Both
   Alt+Tab (windows of the current application) and Super+Tab (applications)
-  are cycled, because GNOME binds them differently.
+  are cycled, because GNOME binds them differently. A combination whose first
+  press moves no window is abandoned straight away, so raising a window of
+  another application takes one Super+Tab instead of thirteen Alt+Tabs.
 - New `wait_until`: poll until a condition holds instead of sleeping a fixed
   time. Conditions are a window appearing or disappearing
   (`{"window": {"title": "...", "exists": false}}`), a window becoming active
