@@ -27,7 +27,7 @@ English summary at the bottom.
 | 窗口操作 | `window_list` 列出标题与是否 `active`；`window_activate` 按标题子串把窗口抬到前台——XWayland 走 `xdotool`，原生 Wayland 用 Alt+Tab / Super+Tab 循环并以无障碍树校验（GNOME 下 Alt+Tab 只切本应用窗口，Super+Tab 才切应用），返回里会说明这次用的是哪条路 |
 | 等待条件 | `wait_until` 轮询直到满足条件：窗口出现/消失、某个窗口变成前台、某个 UI 节点出现、或用户空闲满多少毫秒；超时返回 `satisfied: false` 与最后一轮观察到的状态，不抛错 |
 
-30 个工具，分组见 [docs/DETAIL.md](docs/DETAIL.md)。模型调用方式：`mcp__linux__screenshot`、`mcp__linux__click`、`mcp__linux__ui_find` ……
+32 个工具，分组见 [docs/DETAIL.md](docs/DETAIL.md)。模型调用方式：`mcp__linux__screenshot`、`mcp__linux__click`、`mcp__linux__ui_find` ……
 
 ## 安装
 
@@ -63,6 +63,7 @@ sudo ./linux-computer-use-prep.sh --verify   # 不需要 sudo
 
 - **`ui_tree` 先过滤再读**：`roles: ["push button", "entry"]` 只保留你要的节点类型，祖先会折叠成 `ref`/`role`/`name` 的路径；再加 `compact: true` 去掉 rect/states/text。实测同一屏 140 节点/10.2 KB → 20 节点/0.85 KB。
 - **`screenshot` 用 `region` + `scale: 1.0`**：先在 4480×1440 原图上裁剪再缩放，小字才清楚，token 也只有整屏的三分之一。
+- **看不清哪个能点就用 `marks: true`**：截图会围上带编号的框，同时返回 `marks: [{id, ref, role, name, x, y, width, height}]`（坐标已经是截图像素）。之后 `click_ref {"ref": "e42"}` 或 `click {"text": "保存"}` 直接点，不需要自己算坐标；`screenshot {"ref": "e42"}` 还能单独放大某一个元素。
 
 ## 已知限制（重要，别踩坑）
 

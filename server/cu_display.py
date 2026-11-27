@@ -523,6 +523,61 @@ def downscale(path: str, max_width: int) -> tuple[int, int]:
         return (width, height)
 
 
+# --------------------------------------------------------------------------- #
+# set-of-marks overlay
+# --------------------------------------------------------------------------- #
+
+_MARK_COLOURS = (
+    (0.98, 0.26, 0.26),
+    (0.16, 0.42, 0.98),
+    (0.10, 0.62, 0.36),
+    (0.85, 0.45, 0.05),
+    (0.55, 0.25, 0.75),
+)
+
+
+def annotate(path: str, marks: list[dict]) -> tuple[int, int]:
+    """Draw numbered boxes on a PNG so the model can refer to them by id.
+
+    Each mark carries x/y/width/height already expressed in image pixels, plus
+    an ``id``. The image is edited in place and its size is returned.
+    """
+    if not marks:
+        return png_size(path)
+    try:
+        import cairo  # noqa: PLC0415  (optional at import time)
+    except Exception:  # noqa: BLE001
+        return png_size(path)
+    surface = cairo.ImageSurface.create_from_png(path)
+    ctx = cairo.Context(surface)
+    ctx.select_font_face("Sans", cairo.FONT_SLANT_NORMAL, cairo.FONT_WEIGHT_BOLD)
+    ctx.set_font_size(13.0)
+    for mark in marks:
+        x = float(mark["x"])
+        y = float(mark["y"])
+        w = float(mark["width"])
+        h = float(mark["height"])
+        colour = _MARK_COLOURS[int(mark.get("colour", 0)) % len(_MARK_COLOURS)]
+        ctx.set_line_width(2.0)
+        ctx.set_source_rgba(colour[0], colour[1], colour[2], 0.95)
+        ctx.rectangle(x + 1.0, y + 1.0, max(1.0, w - 2.0), max(1.0, h - 2.0))
+        ctx.stroke()
+        label = str(mark["id"])
+        extents = ctx.text_extents(label)
+        pad = 3.0
+        box_w = extents.width + pad * 2
+        box_h = extents.height + pad * 2
+        left = min(max(0.0, x), max(0.0, surface.get_width() - box_w))
+        top = y - box_h if y - box_h >= 0 else y
+        ctx.rectangle(left, top, box_w, box_h)
+        ctx.fill()
+        ctx.set_source_rgba(1.0, 1.0, 1.0, 1.0)
+        ctx.move_to(left + pad, top + box_h - pad - extents.y_bearing * 0 - 2.0)
+        ctx.show_text(label)
+    surface.write_to_png(path)
+    return surface.get_width(), surface.get_height()
+
+
 def crop_and_scale(path: str, box: tuple[int, int, int, int], out_width: int) -> tuple[int, int]:
     """Crop ``box`` (physical pixels) out of a PNG, then scale it to ``out_width``.
 

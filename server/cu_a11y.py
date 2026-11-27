@@ -404,6 +404,65 @@ class A11y:
                     continue
         return matches
 
+
+    # -- set of marks ------------------------------------------------------ #
+    ACTIONABLE_ROLES = (
+        "push button", "button", "toggle button", "check box", "radio button",
+        "menu item", "check menu item", "radio menu item", "entry", "text",
+        "link", "tab", "page tab", "combo box", "slider", "spin button",
+        "switch", "tree item", "list item",
+    )
+
+    def actionable(self, apps: int = 6, limit: int = 60, timeout_s: float = 5.0) -> list[dict]:
+        """Collect clickable elements with their screen rectangles, in reading order.
+
+        Walks breadth first so that a control near the top of the screen wins over
+        an identical one far below, and skips anything outside the desktop or too
+        small to hit.
+        """
+        self.start()
+        deadline = time.monotonic() + timeout_s
+        queue: list = []
+        for item in self.apps()[:apps]:
+            target = self._apps.get(item["name"])
+            if target is not None:
+                queue.append(target)
+        found: list[dict] = []
+        seen_boxes: set[tuple[int, int, int, int]] = set()
+        visited = 0
+        while queue and len(found) < limit and time.monotonic() < deadline and visited < 4000:
+            acc = queue.pop(0)
+            visited += 1
+            try:
+                role_name = (acc.get_role_name() or "").lower()
+                name = acc.get_name() or ""
+                states = set(_state_names(acc))
+            except Exception:  # noqa: BLE001
+                continue
+            if "defunct" in states:
+                continue
+            acts = _actions(acc)
+            worth = role_name in self.ACTIONABLE_ROLES or any(
+                word in act for act in acts for word in ("press", "click", "activate"))
+            rect = _extents(acc)
+            if worth and rect and rect["width"] >= 8 and rect["height"] >= 8:
+                key = (rect["x"], rect["y"], rect["width"], rect["height"])
+                if key not in seen_boxes:
+                    seen_boxes.add(key)
+                    entry = {"ref": self._ref(acc), "role": role_name, "rect": rect}
+                    if name:
+                        entry["name"] = name[:80]
+                    found.append(entry)
+            try:
+                for index in range(min(acc.get_child_count(), 200)):
+                    child = acc.get_child_at_index(index)
+                    if child is not None:
+                        queue.append(child)
+            except Exception:  # noqa: BLE001
+                continue
+        found.sort(key=lambda item: (item["rect"]["y"], item["rect"]["x"]))
+        return found
+
     def describe_object(self, acc, name: str | None = None, role_name: str | None = None) -> dict:
         try:
             name = name if name is not None else (acc.get_name() or "")

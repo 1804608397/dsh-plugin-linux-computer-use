@@ -45,10 +45,10 @@ reload the page. `linux_mcp_doctor` works either way.
 
 | Group | Tools |
 | --- | --- |
-| Vision | `screenshot` — PNG + size + path; `region` crops before scaling (sharp text), `scale` sets pixels per logical pixel; the first call asks for permission once |
+| Vision | `screenshot` — PNG + size + path; `region` crops before scaling (sharp text), `scale` sets pixels per logical pixel, `ref` crops to one element, `marks` draws numbered boxes around clickable elements and returns them in screenshot pixels; the first call asks for permission once |
 | Tree | `ui_apps`, `ui_tree` (prune with `roles` + `compact`), `ui_find`, `ui_describe`, `ui_text` |
 | Act on elements | `ui_action` (invoke/press/toggle), `ui_focus`, `ui_set_text` |
-| Pointer | `click`, `move`, `drag`, `scroll`, `pointer_button` (hold/release) |
+| Pointer | `click` (coordinates, or `text` to hit an element by name), `click_ref` (by accessibility ref), `move`, `drag`, `scroll`, `pointer_button` (hold/release) |
 | Keyboard | `key` (`ctrl+shift+t`), `type_text` (Unicode via clipboard paste) |
 | Clipboard | `clipboard_get`, `clipboard_set` |
 | System | `process_list`, `process_kill`, `launch_app`, `settings_get`, `settings_set`, `settings_list_keys`, `notify`, `display_info`, `desktop_status` |

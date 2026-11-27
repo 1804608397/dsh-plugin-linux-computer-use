@@ -47,7 +47,7 @@ import cu_sys  # noqa: E402
 import cu_unlock  # noqa: E402
 
 SERVER_NAME = "linux-desktop-mcp"
-SERVER_VERSION = "1.3.0"
+SERVER_VERSION = "1.4.0"
 PROTOCOL_VERSION = "2025-06-18"
 SUPPORTED_PROTOCOLS = {"2024-11-05", "2025-03-26", "2025-06-18"}
 LOG_PATH = os.path.join(cu_display.CACHE_DIR, "server.log")
@@ -291,6 +291,46 @@ def capture_shot(
 # --------------------------------------------------------------------------- #
 # tool implementations
 # --------------------------------------------------------------------------- #
+def _draw_marks(info: dict, limit: int) -> list[dict]:
+    """Collect clickable nodes, express them in screenshot pixels, and draw them."""
+    origin_x = float(info.get("origin_x", 0.0))
+    origin_y = float(info.get("origin_y", 0.0))
+    ratio = float(LAST_SHOT.get("ratio") or 1.0) or 1.0
+    try:
+        nodes = A11Y.actionable(limit=max(1, limit))
+    except cu_a11y.A11yError:
+        return []
+    marks: list[dict] = []
+    for node in nodes:
+        rect = node.get("rect")
+        if not rect:
+            continue
+        left = (rect["x"] - origin_x) / ratio
+        top = (rect["y"] - origin_y) / ratio
+        width = rect["width"] / ratio
+        height = rect["height"] / ratio
+        if left + width < 0 or top + height < 0:
+            continue
+        if left > info["width"] or top > info["height"]:
+            continue
+        if width < 6 or height < 6:
+            continue
+        marks.append({
+            "id": len(marks) + 1,
+            "ref": node["ref"],
+            "role": node["role"],
+            "name": node.get("name", ""),
+            "x": round(left),
+            "y": round(top),
+            "width": round(width),
+            "height": round(height),
+            "colour": len(marks),
+        })
+    if marks:
+        cu_display.annotate(info["path"], marks)
+    return [{key: value for key, value in mark.items() if key != "colour"} for mark in marks]
+
+
 def tool_screenshot(args: dict) -> dict:
     max_width = int(args.get("max_width", SHOT_MAX_WIDTH))
     region = _parse_region(args.get("region"))
@@ -298,6 +338,17 @@ def tool_screenshot(args: dict) -> dict:
     scale = float(scale) if scale else None
     if scale is not None and scale <= 0:
         raise ToolError("scale must be positive (1.0 = one screenshot pixel per logical pixel)")
+    ref = args.get("ref")
+    if ref:
+        if region is not None:
+            raise ToolError("pass either region or ref, not both")
+        node = A11Y.describe(str(ref))
+        rect = node.get("rect")
+        if not rect:
+            raise ToolError(f"element {ref} has no on-screen rectangle to crop to")
+        region = (rect["x"], rect["y"], rect["width"], rect["height"])
+        if scale is None:
+            scale = 1.0
     info = capture_shot(max_width, region=region, scale=scale)
     try:
         with open(info["path"], "rb") as handle:
@@ -315,6 +366,12 @@ def tool_screenshot(args: dict) -> dict:
         logical_width = (info.get("region") or {}).get("width") or info["logical_width"]
         info["coordinate_scale"] = round(logical_width / width, 6) if width else 1.0
         LAST_SHOT.update({"width": width, "height": height, "ratio": info["coordinate_scale"]})
+    marks: list[dict] = []
+    wanted_marks = bool(args.get("marks"))
+    if wanted_marks:
+        marks = _draw_marks(info, int(args.get("marks_limit", 40)))
+        with open(info["path"], "rb") as handle:
+            payload = handle.read()
     encoded = base64.b64encode(payload).decode("ascii")
     if info.get("region"):
         note = (
@@ -333,6 +390,19 @@ def tool_screenshot(args: dict) -> dict:
             f"To click at a pixel of this image pass space='screenshot'; "
             f"otherwise multiply by {info['coordinate_scale']}."
         )
+    if wanted_marks:
+        info["marks"] = marks
+        info["mark_count"] = len(marks)
+        if marks:
+            note += (
+                f" {len(marks)} numbered boxes mark clickable elements; click one with "
+                "click_ref({ref}) or by the coordinates listed in \"marks\" (screenshot space)."
+            )
+        else:
+            note += (
+                " No clickable element was found in this area"
+                " (a locked session hides most of the tree), so no boxes were drawn."
+            )
     return {
         "content": [
             {"type": "image", "data": encoded, "mimeType": "image/png"},
@@ -412,12 +482,69 @@ def tool_ui_set_text(args: dict) -> dict:
 
 def tool_click(args: dict) -> dict:
     _guard_input("click", args)
+    text = args.get("text")
+    if text and args.get("x") is None and args.get("y") is None:
+        hits = [
+            hit for hit in A11Y.find(
+                query=str(text),
+                role=args.get("role"),
+                app=args.get("app"),
+                limit=5,
+            )
+            if hit.get("center")
+        ]
+        if not hits:
+            raise ToolError(
+                f"no element whose name or text matches {text!r}; "
+                "try ui_find to see what is there, or click by coordinates"
+            )
+        best = hits[0]
+        button = _button_name(args.get("button", 1))
+        count = max(1, min(int(args.get("count", 1)), 3))
+        controller().click(best["center"][0], best["center"][1], button=button, count=count)
+        return {
+            "clicked": {
+                "x": best["center"][0],
+                "y": best["center"][1],
+                "button": button,
+                "count": count,
+                "matched": best.get("name") or best.get("text", "")[:60],
+                "role": best.get("role"),
+                "ref": best.get("ref"),
+            }
+        }
     x, y = _point(args)
     x, y = _to_logical(x, y, str(args.get("space", "logical")))
     button = _button_name(args.get("button", 1))
     count = max(1, min(int(args.get("count", 1)), 3))
     controller().click(x, y, button=button, count=count)
     return {"clicked": {"x": round(x), "y": round(y), "button": button, "count": count}}
+
+
+def tool_click_ref(args: dict) -> dict:
+    _guard_input("click", args)
+    ref = str(_require(args, "ref"))
+    node = A11Y.describe(ref)
+    center = node.get("center")
+    rect = node.get("rect")
+    if not center and rect:
+        center = [rect["x"] + rect["width"] // 2, rect["y"] + rect["height"] // 2]
+    if not center:
+        raise ToolError(f"element {ref} has no on-screen rectangle, so it cannot be clicked")
+    button = _button_name(args.get("button", 1))
+    count = max(1, min(int(args.get("count", 1)), 3))
+    controller().click(center[0], center[1], button=button, count=count)
+    return {
+        "clicked": {
+            "x": round(center[0]),
+            "y": round(center[1]),
+            "button": button,
+            "count": count,
+            "ref": ref,
+            "role": node.get("role"),
+            "name": node.get("name", ""),
+        }
+    }
 
 
 def tool_move(args: dict) -> dict:
@@ -1009,6 +1136,7 @@ ALLOW_ACTIVE_PROP = {
 # Tools that inject input all accept the same escape hatch; adding it here keeps
 # the schema in one place instead of ten copies.
 _INJECTING_TOOLS = {
+    "click_ref",
     "click",
     "move",
     "drag",
@@ -1075,6 +1203,29 @@ TOOLS: list[dict] = [
                         "Output pixels per logical pixel: 1.0 keeps native size, 2.0 doubles it. "
                         "Takes precedence over max_width."
                     ),
+                },
+                "ref": {
+                    "type": "string",
+                    "description": (
+                        "Crop to one accessibility node (a ref from ui_find/ui_tree) instead of a "
+                        "region. Great for reading a single widget without guessing its rectangle."
+                    ),
+                },
+                "marks": {
+                    "type": "boolean",
+                    "default": False,
+                    "description": (
+                        "Draw numbered boxes over the clickable elements in the capture and return "
+                        "them as \"marks\": [{id, ref, role, name, x, y, width, height}] in screenshot "
+                        "pixels. Click one with click_ref or by its coordinates, so no guessing."
+                    ),
+                },
+                "marks_limit": {
+                    "type": "integer",
+                    "default": 40,
+                    "minimum": 1,
+                    "maximum": 120,
+                    "description": "How many clickable elements to label at most.",
                 },
             },
         },
@@ -1196,19 +1347,47 @@ TOOLS: list[dict] = [
     },
     {
         "name": "click",
-        "description": "Move the pointer to (x, y) and click. Supports button 1-3 and up to triple clicks.",
+        "description": (
+            "Click at (x, y), or pass text instead of coordinates to click the element whose name "
+            "or text matches. Supports button 1-3 and up to triple clicks."
+        ),
         "inputSchema": {
             "type": "object",
             "properties": {
                 "x": {"type": "number"},
                 "y": {"type": "number"},
+                "text": {
+                    "type": "string",
+                    "description": (
+                        "Click the first element whose accessible name or text contains this string "
+                        "instead of using coordinates. Ignored when x and y are given."
+                    ),
+                },
+                "role": {"type": "string", "description": "With text: restrict to this role fragment."},
+                "app": {"type": "string", "description": "With text: restrict to this application."},
                 "button": {"type": "integer", "default": 1, "description": "1 left, 2 middle, 3 right."},
                 "count": {"type": "integer", "default": 1, "minimum": 1, "maximum": 3},
                 "space": SPACE_PROP,
             },
-            "required": ["x", "y"],
         },
         "handler": tool_click,
+    },
+    {
+        "name": "click_ref",
+        "description": (
+            "Click the centre of one accessibility element by ref (from ui_find, ui_tree, or the "
+            "marks list of an annotated screenshot). The reliable way to click: no coordinates."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "ref": {"type": "string", "description": "Element ref, e.g. \"e42\"."},
+                "button": {"type": "integer", "default": 1, "description": "1 left, 2 middle, 3 right."},
+                "count": {"type": "integer", "default": 1, "minimum": 1, "maximum": 3},
+            },
+            "required": ["ref"],
+        },
+        "handler": tool_click_ref,
     },
     {
         "name": "move",

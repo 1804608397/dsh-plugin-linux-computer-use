@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.5.0 - 2026-11-27
+
+- **Screenshots can label what is clickable.** `screenshot {marks: true}` draws a
+  numbered box around every button, entry, link, tab and menu item it can see in
+  the captured area (pycairo, already on the machine through GTK), and returns
+  the same numbers as `marks: [{id, ref, role, name, x, y, width, height}]` in
+  *screenshot* pixels — so a model can point at "box 4" instead of guessing
+  coordinates. `marks_limit` caps how many boxes are drawn (default 40).
+- `screenshot {ref: "<ref>"}` crops straight to one element's rectangle, which
+  makes "look closely at this button" a single call.
+- `click_ref {ref: "<ref>"}` clicks an element by its accessibility reference
+  (the `ref` that `ui_tree`, `ui_find` and the new `marks` hand out), and
+  `click {text: "Save"}` clicks the first element whose name or text matches —
+  no coordinates at all. Both run through the same lock and idle guards as
+  `click`, and both accept `allow_active_input`.
+- An empty `marks` list is explained in the note (a locked session hides most of
+  the tree) instead of looking like a silent failure.
+- Server 1.4.0.
+
 ## 0.4.0 - 2026-11-27
 
 - **The server now refreshes itself.** The bundle copied `server/*.py` into
