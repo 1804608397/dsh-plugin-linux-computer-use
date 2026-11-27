@@ -47,7 +47,7 @@ import cu_sys  # noqa: E402
 import cu_unlock  # noqa: E402
 
 SERVER_NAME = "linux-desktop-mcp"
-SERVER_VERSION = "1.4.0"
+SERVER_VERSION = "1.5.0"
 PROTOCOL_VERSION = "2025-06-18"
 SUPPORTED_PROTOCOLS = {"2024-11-05", "2025-03-26", "2025-06-18"}
 LOG_PATH = os.path.join(cu_display.CACHE_DIR, "server.log")
@@ -1165,6 +1165,85 @@ def tool_unlock_screen(args: dict) -> dict:
     return result
 
 
+SEQUENCE_MAX_STEPS = int(os.environ.get("DSH_LINUX_CU_SEQUENCE_MAX_STEPS", "25"))
+SEQUENCE_TEXT_LIMIT = 1200
+
+
+def _sequence_step_report(position: int, op: str, ok: bool, elapsed_ms: float, error: str | None = None) -> dict:
+    entry = {"step": position, "op": op, "ok": ok, "ms": int(elapsed_ms)}
+    if error:
+        entry["error"] = error
+    return entry
+
+
+def tool_sequence(args: dict) -> dict:
+    steps = args.get("steps")
+    if not isinstance(steps, list) or not steps:
+        raise ToolError('steps must be a non-empty list of {"op": "...", "args": {...}} objects')
+    if len(steps) > SEQUENCE_MAX_STEPS:
+        raise ToolError(f"too many steps ({len(steps)}); the limit is {SEQUENCE_MAX_STEPS} per call")
+    stop_on_error = bool(args.get("stop_on_error", True))
+    inject_default = bool(args.get("allow_active_input", False))
+    index = tool_index()
+    report: list[dict] = []
+    last_content: list[dict] | None = None
+    stopped_at: int | None = None
+    started = time.monotonic()
+    for position, step in enumerate(steps, start=1):
+        if not isinstance(step, dict):
+            raise ToolError(f'step {position} must be an object like {{"op": "click", "args": {{...}}}}')
+        op = step.get("op")
+        if not isinstance(op, str) or not op.strip():
+            raise ToolError(f'step {position} needs an "op" name')
+        op = op.strip()
+        if op == "sequence":
+            raise ToolError("a sequence cannot contain another sequence")
+        step_args = step.get("args") or {}
+        if not isinstance(step_args, dict):
+            raise ToolError(f"step {position} args must be an object")
+        step_args = dict(step_args)
+        if op not in index:
+            report.append(_sequence_step_report(position, op, False, 0.0, f"unknown tool; available: {sorted(index)}"))
+            if stop_on_error:
+                stopped_at = position
+                break
+            continue
+        if inject_default and op in _INJECTING_TOOLS:
+            step_args.setdefault("allow_active_input", True)
+        began = time.monotonic()
+        payload = call_tool(op, step_args)
+        took = (time.monotonic() - began) * 1000
+        content = payload.get("content") or []
+        if payload.get("isError"):
+            message = " ".join(
+                str(block.get("text", "")) for block in content if isinstance(block, dict)
+            ).strip()
+            report.append(_sequence_step_report(position, op, False, took, message or "failed"))
+            if stop_on_error:
+                stopped_at = position
+                break
+            continue
+        report.append(_sequence_step_report(position, op, True, took))
+        last_content = content
+    elapsed = int((time.monotonic() - started) * 1000)
+    ok = stopped_at is None and all(entry["ok"] for entry in report)
+    summary = {
+        "ok": ok,
+        "steps_total": len(steps),
+        "steps_run": len(report),
+        "stopped_at": stopped_at,
+        "elapsed_ms": elapsed,
+        "steps": report,
+    }
+    boxes = [block for block in (last_content or []) if isinstance(block, dict)]
+    text_tail = " ".join(str(block.get("text", "")) for block in boxes if block.get("type") == "text").strip()
+    if text_tail:
+        summary["last_text"] = text_tail[:SEQUENCE_TEXT_LIMIT]
+    content_out: list[dict] = [{"type": "text", "text": json.dumps(summary, ensure_ascii=False, default=str)}]
+    content_out.extend(block for block in boxes if block.get("type") == "image")
+    return {"content": content_out, "isError": not ok}
+
+
 TOOLS: list[dict] = [
     {
         "name": "screenshot",
@@ -1647,6 +1726,53 @@ TOOLS: list[dict] = [
             },
         },
         "handler": tool_desktop_status,
+    },
+    {
+        "name": "sequence",
+        "description": (
+            "Run several tools in one call and get a compact per-step report plus the last step's "
+            "output. Use it for a fixed multi-step flow (raise a window, click, type, screenshot): it "
+            "saves one model round trip per step, and images from the final step are passed through. "
+            "Steps run in order and a failing step stops the run unless stop_on_error is false."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "steps": {
+                    "type": "array",
+                    "description": (
+                        'Ordered steps, e.g. [{"op": "click", "args": {"x": 40, "y": 30}}, '
+                        '{"op": "type_text", "args": {"text": "hello"}}]'
+                    ),
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "op": {"type": "string", "description": "Tool name, e.g. click, type_text, screenshot"},
+                            "args": {"type": "object", "description": "Arguments for that tool"},
+                        },
+                        "required": ["op"],
+                    },
+                },
+                "stop_on_error": {
+                    "type": "boolean",
+                    "default": True,
+                    "description": (
+                        "Stop at the first failing step (default). Set false to keep going and report "
+                        "every failure, which is useful when a step may legitimately fail."
+                    ),
+                },
+                "allow_active_input": {
+                    "type": "boolean",
+                    "default": False,
+                    "description": (
+                        "Apply allow_active_input=true to every injecting step of the run, instead of "
+                        "repeating it in each step's args."
+                    ),
+                },
+            },
+            "required": ["steps"],
+        },
+        "handler": tool_sequence,
     },
 ]
 

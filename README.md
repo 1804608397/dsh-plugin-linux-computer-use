@@ -27,7 +27,7 @@ English summary at the bottom.
 | 窗口操作 | `window_list` 列出标题与是否 `active`；`window_activate` 按标题子串把窗口抬到前台——XWayland 走 `xdotool`，原生 Wayland 用 Alt+Tab / Super+Tab 循环并以无障碍树校验（GNOME 下 Alt+Tab 只切本应用窗口，Super+Tab 才切应用），返回里会说明这次用的是哪条路 |
 | 等待条件 | `wait_until` 轮询直到满足条件：窗口出现/消失、某个窗口变成前台、某个 UI 节点出现、或用户空闲满多少毫秒；超时返回 `satisfied: false` 与最后一轮观察到的状态，不抛错 |
 
-32 个工具，分组见 [docs/DETAIL.md](docs/DETAIL.md)。模型调用方式：`mcp__linux__screenshot`、`mcp__linux__click`、`mcp__linux__ui_find` ……
+33 个工具，分组见 [docs/DETAIL.md](docs/DETAIL.md)。模型调用方式：`mcp__linux__screenshot`、`mcp__linux__click`、`mcp__linux__ui_find` ……
 
 ## 安装
 
@@ -58,6 +58,12 @@ sudo ./linux-computer-use-prep.sh --verify   # 不需要 sudo
 设置 → 插件 → **Ubuntu 桌面自动化 (Computer Use)** → 打开开关 → 刷新页面。
 
 开着插件但没开 Computer Use 时也可以先跑 `linux_mcp_doctor`（不需要 MCP 在线），它会逐项告诉你缺什么、怎么补。
+
+## 第三招：一次调用跑一整段流程
+
+`sequence` 把多个工具合成一次调用：`{"steps": [{"op": "window_activate", "args": {"title": "嘉立创"}}, {"op": "click", "args": {"text": "保存"}}, {"op": "screenshot", "args": {"region": {...}, "scale": 1}}]}`。
+
+回复是每步的 `{step, op, ok, ms, error?}` 加**最后一步**的输出（含图片），所以上面这段从 4 次模型往返变成 1 次。注入类步骤不必逐个写 `allow_active_input`，在最外层给 `true` 即可；某步允许失败就设 `stop_on_error: false`。
 
 ## 省钱与提速的两招
 

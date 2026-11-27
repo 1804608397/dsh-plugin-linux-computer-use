@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.6.0 - 2026-11-28
+
+- **One call can run a whole flow.** `sequence {steps: [{op, args}, ...]}` runs up
+  to 25 tools in order and answers with a compact per-step report
+  (`{step, op, ok, ms, error?}`), the run's `elapsed_ms`, and the **last** step's
+  output — images included, so a "raise the window, click, type, screenshot" flow
+  costs one round trip instead of four. `stop_on_error: false` keeps going and
+  reports every failure; `allow_active_input: true` applies the idle-guard escape
+  hatch to every injecting step at once instead of repeating it in each step.
+  A sequence cannot nest another sequence (the cap is 25 steps, override with
+  `DSH_LINUX_CU_SEQUENCE_MAX_STEPS`).
+- `ok` is true only when *every* step succeeded; `stopped_at` names the step that
+  halted the run.
+- Server 1.5.0.
+
 ## 0.5.0 - 2026-11-27
 
 - **Screenshots can label what is clickable.** `screenshot {marks: true}` draws a

@@ -1,6 +1,6 @@
 {
   "name": "dsh-plugin-linux-computer-use",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "description": "Computer Use for a Wayland Linux desktop in DeepSeek Harness: screenshots, UI tree, pointer and keyboard input, clipboard, processes and settings, bridged as mcp__linux__* tools. · 让 DSH 接管 Ubuntu/GNOME 桌面：截屏、UI 树、鼠标键盘、剪贴板、进程与系统设置。",
   "type": "module",
   "license": "MIT",
