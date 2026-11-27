@@ -43,6 +43,10 @@ class UnlockError(RuntimeError):
     pass
 
 
+class KeyringLocked(UnlockError):
+    """The secret service accepted the call but never answered it."""
+
+
 # --------------------------------------------------------------------------- #
 # settings
 # --------------------------------------------------------------------------- #
@@ -173,12 +177,20 @@ def fetch_password() -> str | None:
     binary = shutil.which("secret-tool")
     if not binary:
         return None
-    proc = subprocess.run(
-        [binary, "lookup", "service", SERVICE, "account", _account()],
-        text=True,
-        capture_output=True,
-        timeout=20,
-    )
+    try:
+        proc = subprocess.run(
+            [binary, "lookup", "service", SERVICE, "account", _account()],
+            text=True,
+            capture_output=True,
+            timeout=6,
+        )
+    except (subprocess.TimeoutExpired, OSError) as error:
+        # A locked login keyring pops up a prompt and blocks the helper; the
+        # caller needs a clear answer rather than a hang.
+        raise KeyringLocked(
+            "the login keyring did not answer: it is probably locked, so the "
+            "stored unlock password cannot be read in this session"
+        ) from error
     if proc.returncode != 0:
         return None
     value = proc.stdout.rstrip("\n")
@@ -206,7 +218,10 @@ def clear_password() -> bool:
 
 
 def has_password() -> bool:
-    return fetch_password() is not None
+    try:
+        return fetch_password() is not None
+    except Exception:
+        return False
 
 
 # --------------------------------------------------------------------------- #
@@ -216,12 +231,22 @@ def has_password() -> bool:
 
 def status() -> dict[str, Any]:
     policy_name = policy()
-    stored = has_password() if policy_name == "keyring" else None
+    stored: bool | None = None
+    note: str | None = None
+    if policy_name == "keyring":
+        try:
+            stored = fetch_password() is not None
+        except KeyringLocked as error:
+            stored = None
+            note = str(error)
+        except Exception:
+            stored = None
     return {
         "unlock_policy": policy_name,
         "password_stored": stored,
         "settings_path": SETTINGS_PATH,
         "available_policies": list(POLICIES),
+        **({"error": note} if note else {}),
     }
 
 

@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.6.1 - 2026-11-28
+
+- `desktop_status` no longer fails when the login keyring is locked: the secret
+  lookup gets a 6 second deadline and a locked keyring is reported as
+  `password_stored: null` with an `error` line instead of a 20 second hang.
+- Same guard on `unlock_screen`: it now says the keyring is locked instead of
+  blocking the whole tool call.
+- server 1.5.1.
+
 ## 0.6.0 - 2026-11-28
 
 - **One call can run a whole flow.** `sequence {steps: [{op, args}, ...]}` runs up

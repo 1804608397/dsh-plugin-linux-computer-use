@@ -47,7 +47,7 @@ import cu_sys  # noqa: E402
 import cu_unlock  # noqa: E402
 
 SERVER_NAME = "linux-desktop-mcp"
-SERVER_VERSION = "1.5.0"
+SERVER_VERSION = "1.5.1"
 PROTOCOL_VERSION = "2025-06-18"
 SUPPORTED_PROTOCOLS = {"2024-11-05", "2025-03-26", "2025-06-18"}
 LOG_PATH = os.path.join(cu_display.CACHE_DIR, "server.log")
@@ -1041,6 +1041,14 @@ def tool_display_info(args: dict) -> dict:
     return info
 
 
+def _unlock_status() -> dict:
+    """Never let a locked keyring take the whole status call down."""
+    try:
+        return cu_unlock.status()
+    except Exception as error:  # noqa: BLE001 - diagnostics must not raise
+        return {"unlock_policy": cu_unlock.policy(), "password_stored": None, "error": str(error)}
+
+
 def tool_desktop_status(args: dict) -> dict:
     status: dict = {"server": {"name": SERVER_NAME, "version": SERVER_VERSION, "log": LOG_PATH}}
     status["session"] = {
@@ -1049,7 +1057,7 @@ def tool_desktop_status(args: dict) -> dict:
         "locked": cu_sys.screen_locked(),
         "idle_ms": cu_sys.idle_ms(),
         "input_guard_ms": IDLE_GUARD_MS,
-        "unlock": cu_unlock.status(),
+        "unlock": _unlock_status(),
     }
     try:
         current = layout()
