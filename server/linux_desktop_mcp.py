@@ -606,15 +606,26 @@ def tool_window_activate(args: dict) -> dict:
 
     cycles = max(1, min(int(args.get("max_cycles", WINDOW_ACTIVATE_MAX_CYCLES)), 30))
     # GNOME binds Alt+Tab to switching windows *inside* the current application
-    # and Super+Tab to switching applications, so both are worth trying.
+    # and Super+Tab to switching applications, so both are worth trying. A
+    # combination that changes nothing on its first press is not bound here (or
+    # the application has a single window), so move on instead of cycling.
     for combo in ("alt+Tab", "super+Tab"):
         try:
-            for _ in range(cycles):
+            before = _active_titles()
+            for index in range(cycles):
                 controller().key(combo)
                 time.sleep(0.35)
                 if _is_active(match["title"]):
                     return {"activated": True, "method": combo.lower().replace("+", "-"), "window": window, "tried": tried}
-            tried.append({"method": combo, "result": f"{cycles} cycles without reaching it"})
+                now = _active_titles()
+                if now != before:
+                    before = now
+                    continue
+                if index == 0:
+                    tried.append({"method": combo, "result": "no effect here (not bound, or the application has a single window)"})
+                    break
+            else:
+                tried.append({"method": combo, "result": f"{cycles} cycles without reaching it"})
         except cu_input.InputError as error:
             tried.append({"method": combo, "result": str(error)})
             break
@@ -852,6 +863,11 @@ def _match_window(rows: list[dict], title: str, app: str) -> dict | None:
             if app_needle in (row["app"] or "").lower():
                 return row
     return None
+
+
+def _active_titles() -> set:
+    """Titles of the windows the accessibility tree currently reports as ACTIVE."""
+    return {row["title"] for row in _frame_rows() if row["active"]}
 
 
 def _is_active(title: str) -> bool:
