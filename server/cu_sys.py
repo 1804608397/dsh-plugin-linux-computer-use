@@ -86,6 +86,40 @@ def screen_locked() -> bool | None:
         return None
 
 
+def idle_ms() -> int | None:
+    """Milliseconds since the last keyboard or pointer event, or ``None``.
+
+    Mutter's IdleMonitor is the compositor's own idea of idleness, so it sees
+    input delivered to any client (including the ones synthetic input misses).
+    ``None`` means the service is not there (not GNOME, or a very old release);
+    callers then fall back to behaving as before.
+    """
+    try:
+        import gi
+
+        gi.require_version("Gio", "2.0")
+        gi.require_version("GLib", "2.0")
+        from gi.repository import Gio, GLib
+    except (ImportError, ValueError):
+        return None
+    try:
+        connection = Gio.bus_get_sync(Gio.BusType.SESSION, None)
+        reply = connection.call_sync(
+            "org.gnome.Mutter.IdleMonitor",
+            "/org/gnome/Mutter/IdleMonitor/Core",
+            "org.gnome.Mutter.IdleMonitor",
+            "GetIdletime",
+            None,
+            GLib.VariantType.new("(t)"),
+            Gio.DBusCallFlags.NONE,
+            2000,
+            None,
+        )
+        return int(reply.unpack()[0])
+    except Exception:  # noqa: BLE001 - a missing service is not an error here
+        return None
+
+
 def have(binary: str) -> bool:
     return shutil.which(binary) is not None
 

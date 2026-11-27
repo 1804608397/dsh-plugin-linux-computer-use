@@ -45,16 +45,17 @@ import cu_sys  # noqa: E402
 import cu_unlock  # noqa: E402
 
 SERVER_NAME = "linux-desktop-mcp"
-SERVER_VERSION = "1.0.0"
+SERVER_VERSION = "1.1.0"
 PROTOCOL_VERSION = "2025-06-18"
 SUPPORTED_PROTOCOLS = {"2024-11-05", "2025-03-26", "2025-06-18"}
 LOG_PATH = os.path.join(cu_display.CACHE_DIR, "server.log")
 MAX_IMAGE_BYTES = 3_500_000
 SHOT_MAX_WIDTH = 1600
+IDLE_GUARD_MS = int(os.environ.get("DSH_LINUX_CU_IDLE_GUARD_MS", "60000"))
 
 A11Y = cu_a11y.A11y()
 INPUT: cu_input.InputController | None = None
-LAST_SHOT: dict = {"path": None, "width": 0, "height": 0, "logical": None, "at": 0.0}
+LAST_SHOT: dict = {"path": None, "width": 0, "height": 0, "logical": None, "origin": (0, 0), "ratio": 1.0, "at": 0.0}
 
 
 BUTTON_NAMES = {1: "left", 2: "middle", 3: "right"}
@@ -106,29 +107,50 @@ def controller(reload_layout: bool = False) -> cu_input.InputController:
     return INPUT
 
 
-def _guard_input(what: str) -> None:
-    """Refuse to inject input while the session is locked.
+def _guard_input(what: str, args: dict | None = None) -> None:
+    """Refuse to inject input while the session is locked or the user is active.
 
     A locked GNOME session keeps the password field focused, so a stray click
     or keystroke lands inside it. Screenshots stay allowed; only input is
     blocked. ``DSH_LINUX_CU_ALLOW_LOCKED_INPUT=1`` is the escape hatch for
     someone who really knows what they are doing.
+
+    The second guard covers a subtler failure: driving the pointer while the
+    user is typing fights them for the keyboard and moves their cursor mid
+    gesture. When the compositor reports recent input, injection is refused
+    unless the caller says the user asked for it right now
+    (``allow_active_input=true``) or the machine-wide escape hatch
+    ``DSH_LINUX_CU_ALLOW_ACTIVE_INPUT=1`` is set.
     """
-    if os.environ.get("DSH_LINUX_CU_ALLOW_LOCKED_INPUT") == "1":
-        return
-    if cu_sys.screen_locked() is True:
-        if cu_unlock.unlock_enabled():
-            hint = "unlock_screen is available because the user turned AI unlocking on."
-        else:
-            hint = (
-                "Unlock the desktop and retry; the user can also switch AI unlocking "
-                "on (unlock policy) to let this be handled here."
+    if os.environ.get("DSH_LINUX_CU_ALLOW_LOCKED_INPUT") != "1":
+        if cu_sys.screen_locked() is True:
+            if cu_unlock.unlock_enabled():
+                hint = "unlock_screen is available because the user turned AI unlocking on."
+            else:
+                hint = (
+                    "Unlock the desktop and retry; the user can also switch AI unlocking "
+                    "on (unlock policy) to let this be handled here."
+                )
+            raise ToolError(
+                f"refusing to {what}: the session is locked. The lock screen's focused "
+                f"widget is the password field, so injected input would type into it. "
+                f"{hint} mcp__linux__screenshot still works."
             )
-        raise ToolError(
-            f"refusing to {what}: the session is locked. The lock screen's focused "
-            f"widget is the password field, so injected input would type into it. "
-            f"{hint} mcp__linux__screenshot still works."
-        )
+
+    if os.environ.get("DSH_LINUX_CU_ALLOW_ACTIVE_INPUT") == "1":
+        return
+    if args and args.get("allow_active_input"):
+        return
+    idle = cu_sys.idle_ms()
+    if idle is None or idle >= IDLE_GUARD_MS:
+        return
+    raise ToolError(
+        f"refusing to {what}: the user is at the keyboard (last input {idle / 1000:.1f}s ago), "
+        f"so synthetic input would fight them. Wait until they have been idle for "
+        f"{IDLE_GUARD_MS // 1000}s, or pass allow_active_input=true when they just asked you "
+        f"to drive the desktop. Screenshots and reads stay available."
+    )
+
 
 
 def _to_logical(x: float, y: float, space: str) -> tuple[float, float]:
@@ -137,18 +159,50 @@ def _to_logical(x: float, y: float, space: str) -> tuple[float, float]:
         logical = LAST_SHOT.get("logical") or None
         if not shot_w or not logical:
             raise ToolError("no screenshot yet: take one first, or pass space='logical'")
-        ratio = (logical[0] / shot_w) if shot_w else 1.0
-        return (x * ratio, y * ratio)
+        ratio = LAST_SHOT.get("ratio") or ((logical[0] / shot_w) if shot_w else 1.0)
+        origin = LAST_SHOT.get("origin") or (0, 0)
+        return (origin[0] + x * ratio, origin[1] + y * ratio)
     return (x, y)
 
 
-def capture_shot(max_width: int = SHOT_MAX_WIDTH) -> dict:
+def _parse_region(value) -> tuple[float, float, float, float] | None:
+    """Accept ``{x, y, width, height}`` (logical pixels) or ``[x, y, w, h]``."""
+    if value is None:
+        return None
+    if isinstance(value, dict):
+        try:
+            x = float(value.get("x", 0))
+            y = float(value.get("y", 0))
+            w = float(value["width"] if "width" in value else value["w"])
+            h = float(value["height"] if "height" in value else value["h"])
+        except (KeyError, TypeError, ValueError) as error:
+            raise ToolError("region must be {x, y, width, height} in logical pixels") from error
+    elif isinstance(value, (list, tuple)) and len(value) == 4:
+        x, y, w, h = (float(v) for v in value)
+    else:
+        raise ToolError("region must be {x, y, width, height} in logical pixels")
+    if w <= 0 or h <= 0:
+        raise ToolError("region width and height must be positive")
+    return (x, y, w, h)
+
+
+def capture_shot(
+    max_width: int = SHOT_MAX_WIDTH,
+    region: tuple[float, float, float, float] | None = None,
+    scale: float | None = None,
+) -> dict:
     """Grab the desktop, preferring the screenshot portal over a pipewire stream.
 
     The portal Screenshot interface is a single round trip (~0.5s) and needs no
     long-lived session, so it is the default. The ScreenCast + GStreamer path
     stays as a fallback because it is the only one that can stream frames when
     capture permission exists but the screenshot interface is missing.
+
+    ``region`` (logical pixels) crops before downscaling, which is what makes
+    small UI text readable: a 900 px wide slice of the desktop stays sharp at
+    1400 px of output, while the same output from a 4480 px desktop is mush.
+    ``scale`` sets output pixels per logical pixel (1.0 = native size) and takes
+    precedence over ``max_width``.
     """
     name = f"shot-{time.strftime('%Y%m%d-%H%M%S')}-{int(time.time() * 1000) % 1000:03d}.png"
     path = os.path.join(cu_display.SHOT_DIR, name)
@@ -177,25 +231,59 @@ def capture_shot(max_width: int = SHOT_MAX_WIDTH) -> dict:
                 "run linux_mcp_doctor to see the current state."
             ) from error
 
-    width, height = cu_display.downscale(path, max_width)
     current = layout()
+    raw_width, raw_height = cu_display.png_size(path)
+    # The portal hands back physical pixels; logical desktop size can be smaller
+    # on HiDPI, and region/scale are both expressed in logical pixels.
+    physical = (raw_width / current.width) if current.width and raw_width else 1.0
+    origin = (0.0, 0.0)
+    region_used = None
+
+    if region is not None:
+        x, y, w, h = region
+        box = (
+            round(x * physical),
+            round(y * physical),
+            max(1, round(w * physical)),
+            max(1, round(h * physical)),
+        )
+        target = round(w * scale) if scale else max_width
+        width, height = cu_display.crop_and_scale(path, box, max(1, int(target)))
+        origin = (x, y)
+        region_used = {"x": round(x), "y": round(y), "width": round(w), "height": round(h)}
+        ratio = (w / width) if width else 1.0
+    elif scale:
+        width, height = cu_display.crop_and_scale(
+            path, (0, 0, raw_width, raw_height), max(1, round(current.width * scale))
+        )
+        ratio = (current.width / width) if width else 1.0
+    else:
+        width, height = cu_display.downscale(path, max_width)
+        ratio = (current.width / width) if width else 1.0
+
     LAST_SHOT.update({
         "path": path,
         "width": width,
         "height": height,
         "logical": (current.width, current.height),
+        "origin": origin,
+        "ratio": ratio,
         "at": time.time(),
     })
-    return {
+    info = {
         "path": path,
         "width": width,
         "height": height,
         "logical_width": current.width,
         "logical_height": current.height,
-        "coordinate_scale": round(current.width / width, 6) if width else 1.0,
+        "coordinate_scale": round(ratio, 6),
         "captured_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
         "method": method,
     }
+    if region_used:
+        info["region"] = region_used
+        info["origin_x"], info["origin_y"] = region_used["x"], region_used["y"]
+    return info
 
 
 # --------------------------------------------------------------------------- #
@@ -203,7 +291,12 @@ def capture_shot(max_width: int = SHOT_MAX_WIDTH) -> dict:
 # --------------------------------------------------------------------------- #
 def tool_screenshot(args: dict) -> dict:
     max_width = int(args.get("max_width", SHOT_MAX_WIDTH))
-    info = capture_shot(max_width)
+    region = _parse_region(args.get("region"))
+    scale = args.get("scale")
+    scale = float(scale) if scale else None
+    if scale is not None and scale <= 0:
+        raise ToolError("scale must be positive (1.0 = one screenshot pixel per logical pixel)")
+    info = capture_shot(max_width, region=region, scale=scale)
     try:
         with open(info["path"], "rb") as handle:
             payload = handle.read()
@@ -215,14 +308,29 @@ def tool_screenshot(args: dict) -> dict:
             payload = handle.read()
         width, height = cu_display.png_size(info["path"])
         info["width"], info["height"] = width, height
-        info["coordinate_scale"] = round(info["logical_width"] / width, 6) if width else 1.0
+        # The ratio must follow the *visible* slice, not the whole desktop, so a
+        # cropped capture still maps screenshot pixels back to logical ones.
+        logical_width = (info.get("region") or {}).get("width") or info["logical_width"]
+        info["coordinate_scale"] = round(logical_width / width, 6) if width else 1.0
+        LAST_SHOT.update({"width": width, "height": height, "ratio": info["coordinate_scale"]})
     encoded = base64.b64encode(payload).decode("ascii")
-    note = (
-        f"screenshot {info['width']}x{info['height']} px saved at {info['path']}; "
-        f"logical desktop is {info['logical_width']}x{info['logical_height']}. "
-        f"To click at a pixel of this image pass space='screenshot'; "
-        f"otherwise multiply by {info['coordinate_scale']}."
-    )
+    if info.get("region"):
+        note = (
+            f"screenshot {info['width']}x{info['height']} px saved at {info['path']}; it shows the "
+            f"logical region x={info['origin_x']} y={info['origin_y']} "
+            f"{info['region']['width']}x{info['region']['height']} of a "
+            f"{info['logical_width']}x{info['logical_height']} desktop. "
+            f"To click at a pixel of this image pass space='screenshot'; "
+            f"otherwise add ({info['origin_x']}, {info['origin_y']}) and multiply by "
+            f"{info['coordinate_scale']}."
+        )
+    else:
+        note = (
+            f"screenshot {info['width']}x{info['height']} px saved at {info['path']}; "
+            f"logical desktop is {info['logical_width']}x{info['logical_height']}. "
+            f"To click at a pixel of this image pass space='screenshot'; "
+            f"otherwise multiply by {info['coordinate_scale']}."
+        )
     return {
         "content": [
             {"type": "image", "data": encoded, "mimeType": "image/png"},
@@ -271,20 +379,20 @@ def tool_ui_text(args: dict) -> dict:
 
 
 def tool_ui_action(args: dict) -> dict:
-    _guard_input("tool_ui_action")
+    _guard_input("act on an accessibility node", args)
     ref = _require(args, "ref")
     action = args.get("action")
     return A11Y.action(ref, action)
 
 
 def tool_ui_focus(args: dict) -> dict:
-    _guard_input("tool_ui_focus")
+    _guard_input("move focus", args)
     ref = _require(args, "ref")
     return A11Y.focus(ref)
 
 
 def tool_ui_set_text(args: dict) -> dict:
-    _guard_input("tool_ui_set_text")
+    _guard_input("set a widget value", args)
     ref = _require(args, "ref")
     text = args.get("text")
     if not isinstance(text, str):
@@ -293,7 +401,7 @@ def tool_ui_set_text(args: dict) -> dict:
 
 
 def tool_click(args: dict) -> dict:
-    _guard_input("click")
+    _guard_input("click", args)
     x, y = _point(args)
     x, y = _to_logical(x, y, str(args.get("space", "logical")))
     button = _button_name(args.get("button", 1))
@@ -303,7 +411,7 @@ def tool_click(args: dict) -> dict:
 
 
 def tool_move(args: dict) -> dict:
-    _guard_input("move the pointer")
+    _guard_input("move the pointer", args)
     x, y = _point(args)
     x, y = _to_logical(x, y, str(args.get("space", "logical")))
     controller().move(x, y)
@@ -311,7 +419,7 @@ def tool_move(args: dict) -> dict:
 
 
 def tool_drag(args: dict) -> dict:
-    _guard_input("drag")
+    _guard_input("drag", args)
     start = (float(args.get("x1", 0)), float(args.get("y1", 0)))
     end = (float(args.get("x2", 0)), float(args.get("y2", 0)))
     space = str(args.get("space", "logical"))
@@ -323,7 +431,7 @@ def tool_drag(args: dict) -> dict:
 
 
 def tool_scroll(args: dict) -> dict:
-    _guard_input("scroll")
+    _guard_input("scroll", args)
     dx = int(args.get("dx", 0))
     dy = int(args.get("dy", 0))
     if not dx and not dy:
@@ -333,7 +441,7 @@ def tool_scroll(args: dict) -> dict:
 
 
 def tool_pointer_button(args: dict) -> dict:
-    _guard_input("press a mouse button")
+    _guard_input("press a mouse button", args)
     action = str(args.get("action", "press")).lower()
     button = _button_name(args.get("button", 1))
     if args.get("x") is not None and args.get("y") is not None:
@@ -349,14 +457,14 @@ def tool_pointer_button(args: dict) -> dict:
 
 
 def tool_key(args: dict) -> dict:
-    _guard_input("press a key")
+    _guard_input("press a key", args)
     combo = _require(args, "combo")
     controller().key(str(combo))
     return {"pressed": combo}
 
 
 def tool_type_text(args: dict) -> dict:
-    _guard_input("type text")
+    _guard_input("type text", args)
     text = _require(args, "text")
     controller().type_text(str(text))
     return {"typed": len(str(text))}
@@ -479,6 +587,8 @@ def tool_desktop_status(args: dict) -> dict:
         "type": os.environ.get("XDG_SESSION_TYPE", ""),
         "desktop": os.environ.get("XDG_CURRENT_DESKTOP", ""),
         "locked": cu_sys.screen_locked(),
+        "idle_ms": cu_sys.idle_ms(),
+        "input_guard_ms": IDLE_GUARD_MS,
         "unlock": cu_unlock.status(),
     }
     try:
@@ -554,6 +664,30 @@ SPACE_PROP = {
     "description": "Coordinate space: 'logical' desktop pixels, or 'screenshot' pixels of the last screenshot.",
 }
 
+ALLOW_ACTIVE_PROP = {
+    "type": "boolean",
+    "default": False,
+    "description": (
+        "Set true when the user just asked you to drive the desktop: it skips the idle guard, "
+        "which otherwise refuses injected input while they are using the keyboard or pointer."
+    ),
+}
+
+# Tools that inject input all accept the same escape hatch; adding it here keeps
+# the schema in one place instead of ten copies.
+_INJECTING_TOOLS = {
+    "click",
+    "move",
+    "drag",
+    "scroll",
+    "pointer_button",
+    "key",
+    "type_text",
+    "ui_action",
+    "ui_focus",
+    "ui_set_text",
+}
+
 def tool_unlock_screen(args: dict) -> dict:
     confirm = str(args.get("confirm") or "").strip().lower()
     if confirm != "unlock":
@@ -574,10 +708,11 @@ TOOLS: list[dict] = [
     {
         "name": "screenshot",
         "description": (
-            "Capture the whole desktop and return it as a PNG image plus its size and path. "
-            "Use it to see the screen before deciding where to click. The desktop asks for a "
-            "one-time screen-capture approval; after that every capture is silent and takes "
-            "about half a second."
+            "Capture the desktop (or one region of it) and return a PNG image plus its size and path. "
+            "Use it to see the screen before deciding where to click. Pass region {x, y, width, height} "
+            "in logical pixels when you only need one window or one corner: a cropped capture stays "
+            "sharp, while the whole 4K desktop scaled down does not. The desktop asks for a one-time "
+            "screen-capture approval; after that every capture is silent and takes about half a second."
         ),
         "inputSchema": {
             "type": "object",
@@ -585,8 +720,29 @@ TOOLS: list[dict] = [
                 "max_width": {
                     "type": "integer",
                     "default": SHOT_MAX_WIDTH,
-                    "description": "Downscale the image to this pixel width (0 keeps native resolution).",
-                }
+                    "description": "Downscale the image to this pixel width (0 keeps native resolution). Ignored when scale is given.",
+                },
+                "region": {
+                    "type": "object",
+                    "description": (
+                        "Capture only this rectangle, in logical desktop pixels. Cropping before "
+                        "downscaling is what keeps small UI text readable."
+                    ),
+                    "properties": {
+                        "x": {"type": "number"},
+                        "y": {"type": "number"},
+                        "width": {"type": "number"},
+                        "height": {"type": "number"},
+                    },
+                    "required": ["x", "y", "width", "height"],
+                },
+                "scale": {
+                    "type": "number",
+                    "description": (
+                        "Output pixels per logical pixel: 1.0 keeps native size, 2.0 doubles it. "
+                        "Takes precedence over max_width."
+                    ),
+                },
             },
         },
         "handler": tool_screenshot,
@@ -917,6 +1073,12 @@ TOOLS: list[dict] = [
         "handler": tool_desktop_status,
     },
 ]
+
+# Every input-injecting tool advertises the idle-guard escape hatch.
+for _spec in TOOLS:
+    if _spec["name"] in _INJECTING_TOOLS:
+        _spec["inputSchema"].setdefault("properties", {})["allow_active_input"] = ALLOW_ACTIVE_PROP
+
 
 UNLOCK_TOOL: dict = {
     "name": "unlock_screen",

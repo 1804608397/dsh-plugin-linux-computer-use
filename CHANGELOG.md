@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.2.0 - 2026-11-27
+
+- `screenshot` gained `region` and `scale`. Cropping before downscaling is the
+  fix for HiDPI desktops: 11 px UI text on a 4480x1440 desktop used to turn to
+  mush once the capture was scaled to 1400 px wide, and re-reading a whole
+  screen to make out one label burned most of the tokens in a session. A
+  cropped capture keeps native sharpness and costs a fraction of the tokens.
+  `space: "screenshot"` adds the crop offset back, so coordinates stay correct.
+- New idle guard: synthetic input is refused while the user has touched the
+  keyboard or pointer in the last 60 seconds (`org.gnome.Mutter.IdleMonitor`),
+  so automation cannot fight the person at the machine. Pass
+  `allow_active_input: true` on any input tool — the model does so when the
+  user explicitly asked it to drive — or set
+  `DSH_LINUX_CU_ALLOW_ACTIVE_INPUT=1`; tune the window with
+  `DSH_LINUX_CU_IDLE_GUARD_MS`. Screenshots, UI reads and clipboard reads stay
+  available, and `desktop_status` reports `session.idle_ms`.
+- `capture_shot` now converts logical coordinates to the physical pixels the
+  portal returns, so `region` is correct on fractional HiDPI scaling.
+- MCP server version 1.1.0.
+
 ## 0.1.1 - 2026-11-25
 
 - fix: send the complete `input_absinfo` when creating the absolute pointer.

@@ -521,3 +521,36 @@ def downscale(path: str, max_width: int) -> tuple[int, int]:
         return png_size(path)
     except Exception:  # noqa: BLE001 - scaling is best effort
         return (width, height)
+
+
+def crop_and_scale(path: str, box: tuple[int, int, int, int], out_width: int) -> tuple[int, int]:
+    """Crop ``box`` (physical pixels) out of a PNG, then scale it to ``out_width``.
+
+    Cropping before scaling is the whole point: a 4480x1440 desktop scaled to
+    1400 px makes small UI text unreadable, while a 900x400 region of it stays
+    sharp at the same output size. The box is clipped to the image, and every
+    failure falls back to the untouched file so a capture is never lost.
+    """
+    width, height = png_size(path)
+    x, y, w, h = box
+    x = max(0, min(int(x), max(0, width - 1)))
+    y = max(0, min(int(y), max(0, height - 1)))
+    w = max(1, min(int(w), width - x))
+    h = max(1, min(int(h), height - y))
+    target_width = out_width if out_width > 0 else w
+    target_height = max(1, round(h * target_width / w)) if w else h
+    try:
+        gi.require_version("GdkPixbuf", "2.0")
+        from gi.repository import GdkPixbuf
+
+        pixbuf = GdkPixbuf.Pixbuf.new_from_file(path)
+        cropped = pixbuf.new_subpixbuf(x, y, w, h)
+        out = cropped
+        if (target_width, target_height) != (w, h):
+            scaled = cropped.scale_simple(target_width, target_height, GdkPixbuf.InterpType.BILINEAR)
+            if scaled is not None:
+                out = scaled
+        out.savev(path, "png", [], [])
+        return png_size(path)
+    except Exception:  # noqa: BLE001 - cropping is best effort
+        return (width, height)

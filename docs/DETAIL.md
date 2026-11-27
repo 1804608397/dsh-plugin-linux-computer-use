@@ -15,6 +15,7 @@ Wayland neither exists, so each capability has its own path:
 | Clipboard | `wl-copy` / `wl-paste` | `xclip` does not work on Wayland |
 | Settings ("registry") | `gsettings` / dconf | closest analogue to the registry |
 | Lock state | `org.gnome.ScreenSaver.GetActive` over the session bus | input must stop while the lock screen holds the password field; screenshots stay allowed |
+| Idle state | `org.gnome.Mutter.IdleMonitor.GetIdletime` over the session bus | synthetic input stops while the user is at the keyboard, so automation cannot fight them |
 | Processes | `ps` and `/proc` | portable |
 
 ## Requirements
@@ -43,7 +44,7 @@ reload the page. `linux_mcp_doctor` works either way.
 
 | Group | Tools |
 | --- | --- |
-| Vision | `screenshot` — PNG + size + path; the first call asks for permission once |
+| Vision | `screenshot` — PNG + size + path; `region` crops before scaling (sharp text), `scale` sets pixels per logical pixel; the first call asks for permission once |
 | Tree | `ui_apps`, `ui_tree`, `ui_find`, `ui_describe`, `ui_text` |
 | Act on elements | `ui_action` (invoke/press/toggle), `ui_focus`, `ui_set_text` |
 | Pointer | `click`, `move`, `drag`, `scroll`, `pointer_button` (hold/release) |
@@ -54,7 +55,18 @@ reload the page. `linux_mcp_doctor` works either way.
 
 Coordinates are **logical desktop pixels**. Pass `space: "screenshot"` to give
 coordinates in the pixels of the most recent screenshot instead; on a HiDPI
-display those differ, and the tool converts for you.
+display those differ, and the tool converts for you. A cropped screenshot keeps
+the offset, so `space: "screenshot"` still lands on the right spot.
+
+Reading one window is much cheaper than reading the whole desktop:
+
+```json
+{"region": {"x": 120, "y": 140, "width": 900, "height": 620}, "scale": 1.0}
+```
+
+The desktop is 4480x1440 on HiDPI; scaled to 1400 px wide the same capture
+turns 11 px text into mush, while the crop above stays at native sharpness and
+costs a third of the tokens.
 
 ## What works well and what does not
 
