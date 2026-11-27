@@ -605,17 +605,21 @@ def tool_window_activate(args: dict) -> dict:
         tried.append({"method": "atspi", "result": str(error)})
 
     cycles = max(1, min(int(args.get("max_cycles", WINDOW_ACTIVATE_MAX_CYCLES)), 30))
-    try:
-        for _ in range(cycles):
-            controller().key("alt+Tab")
-            time.sleep(0.35)
-            if _is_active(match["title"]):
-                return {"activated": True, "method": "alt-tab", "window": window, "tried": tried}
-        tried.append({"method": "alt-tab", "result": f"{cycles} cycles without reaching it"})
-    except cu_input.InputError as error:
-        tried.append({"method": "alt-tab", "result": str(error)})
-    except Exception as error:  # noqa: BLE001
-        tried.append({"method": "alt-tab", "result": str(error)})
+    # GNOME binds Alt+Tab to switching windows *inside* the current application
+    # and Super+Tab to switching applications, so both are worth trying.
+    for combo in ("alt+Tab", "super+Tab"):
+        try:
+            for _ in range(cycles):
+                controller().key(combo)
+                time.sleep(0.35)
+                if _is_active(match["title"]):
+                    return {"activated": True, "method": combo.lower().replace("+", "-"), "window": window, "tried": tried}
+            tried.append({"method": combo, "result": f"{cycles} cycles without reaching it"})
+        except cu_input.InputError as error:
+            tried.append({"method": combo, "result": str(error)})
+            break
+        except Exception as error:  # noqa: BLE001
+            tried.append({"method": combo, "result": str(error)})
 
     return {
         "activated": False,
@@ -624,8 +628,10 @@ def tool_window_activate(args: dict) -> dict:
         "tried": tried,
         "hint": (
             "none of the three strategies raised it: X11 sees only XWayland surfaces, the "
-            "accessibility default action is a no-op for most toolkits, and Alt+Tab needs "
-            "the uinput keyboard. Raise it by hand, or pass a more distinctive title"
+            "accessibility default action is a no-op for most toolkits, and the keyboard "
+            "fallback needs uinput plus a matching keybinding (Alt+Tab switches windows of "
+            "the current application, Super+Tab switches applications). Raise it by hand, or "
+            "pass a more distinctive title"
         ),
     }
 

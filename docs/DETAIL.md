@@ -16,7 +16,7 @@ Wayland neither exists, so each capability has its own path:
 | Settings ("registry") | `gsettings` / dconf | closest analogue to the registry |
 | Lock state | `org.gnome.ScreenSaver.GetActive` over the session bus | input must stop while the lock screen holds the password field; screenshots stay allowed |
 | Idle state | `org.gnome.Mutter.IdleMonitor.GetIdletime` over the session bus | synthetic input stops while the user is at the keyboard, so automation cannot fight them |
-| Raising a window | `xdotool windowactivate` (XWayland), the AT-SPI default action, then Alt+Tab with an accessibility check | native Wayland surfaces are invisible to X11, `_NET_ACTIVE_WINDOW` cannot be honoured by the compositor, and the AT-SPI default action is a no-op for most toolkits |
+| Raising a window | `xdotool windowactivate` (XWayland), the AT-SPI default action, then Alt+Tab and Super+Tab with an accessibility check | native Wayland surfaces are invisible to X11, `_NET_ACTIVE_WINDOW` cannot be honoured by the compositor, and the AT-SPI default action is a no-op for most toolkits |
 | Processes | `ps` and `/proc` | portable |
 
 ## Requirements
@@ -52,7 +52,7 @@ reload the page. `linux_mcp_doctor` works either way.
 | Keyboard | `key` (`ctrl+shift+t`), `type_text` (Unicode via clipboard paste) |
 | Clipboard | `clipboard_get`, `clipboard_set` |
 | System | `process_list`, `process_kill`, `launch_app`, `settings_get`, `settings_set`, `settings_list_keys`, `notify`, `display_info`, `desktop_status` |
-| Windows | `window_list` (titles + `active`), `window_activate` — raises a window by title substring; XWayland through `xdotool`, native Wayland by cycling Alt+Tab and checking the accessibility tree, and the reply names the strategy that worked |
+| Windows | `window_list` (titles + `active`), `window_activate` — raises a window by title substring; XWayland through `xdotool`, native Wayland by cycling Alt+Tab then Super+Tab and checking the accessibility tree (GNOME binds Alt+Tab to windows of the current app and Super+Tab to applications), and the reply names the strategy that worked |
 | Waiting | `wait_until` — poll until `window` appears/disappears, `window_active` is raised, a `ui` node shows up, or `idle_at_least` ms pass; on timeout it returns `satisfied: false` with the last state instead of throwing |
 | Unlocking (opt-in) | `unlock_screen` — only listed while the unlock policy is on; see below |
 

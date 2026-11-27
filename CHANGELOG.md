@@ -6,7 +6,9 @@
   strategies are tried in order and the reply says which one worked: `xdotool
   windowactivate` for XWayland surfaces, the AT-SPI default action for toolkits
   that honour it, and Alt+Tab cycling verified against the accessibility tree
-  for native Wayland windows, which neither X11 nor AT-SPI can raise.
+  for native Wayland windows, which neither X11 nor AT-SPI can raise. Both
+  Alt+Tab (windows of the current application) and Super+Tab (applications)
+  are cycled, because GNOME binds them differently.
 - New `wait_until`: poll until a condition holds instead of sleeping a fixed
   time. Conditions are a window appearing or disappearing
   (`{"window": {"title": "...", "exists": false}}`), a window becoming active
