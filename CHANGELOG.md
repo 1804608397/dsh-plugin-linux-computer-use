@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.3.0 - 2026-11-27
+
+- New `window_activate`: raise a window by title substring (or app name). Three
+  strategies are tried in order and the reply says which one worked: `xdotool
+  windowactivate` for XWayland surfaces, the AT-SPI default action for toolkits
+  that honour it, and Alt+Tab cycling verified against the accessibility tree
+  for native Wayland windows, which neither X11 nor AT-SPI can raise.
+- New `wait_until`: poll until a condition holds instead of sleeping a fixed
+  time. Conditions are a window appearing or disappearing
+  (`{"window": {"title": "...", "exists": false}}`), a window becoming active
+  (`{"window_active": "Chrome"}`), an accessibility node showing up
+  (`{"ui": {"app": "...", "name": "...", "role": "..."}}`), or the user being
+  idle for a while (`{"idle_at_least": 60000}`). On timeout it returns
+  `satisfied: false` with the last observed state instead of throwing.
+- `window_list` now reports `active` from the AT-SPI `ACTIVE` state, which is
+  the flag most toolkits set on the toplevel frame (`FOCUSED` alone missed
+  them, so every window used to look inactive).
+- MCP server version 1.2.0.
+
 ## 0.2.0 - 2026-11-27
 
 - `screenshot` gained `region` and `scale`. Cropping before downscaling is the

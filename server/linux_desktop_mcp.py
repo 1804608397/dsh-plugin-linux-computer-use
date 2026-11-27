@@ -32,6 +32,7 @@ from __future__ import annotations
 import base64
 import json
 import os
+import subprocess
 import sys
 import time
 import traceback
@@ -45,7 +46,7 @@ import cu_sys  # noqa: E402
 import cu_unlock  # noqa: E402
 
 SERVER_NAME = "linux-desktop-mcp"
-SERVER_VERSION = "1.1.0"
+SERVER_VERSION = "1.2.0"
 PROTOCOL_VERSION = "2025-06-18"
 SUPPORTED_PROTOCOLS = {"2024-11-05", "2025-03-26", "2025-06-18"}
 LOG_PATH = os.path.join(cu_display.CACHE_DIR, "server.log")
@@ -535,20 +536,200 @@ def tool_window_list(args: dict) -> dict:
             node = A11Y.describe(app["ref"])
         except cu_a11y.A11yError:
             continue
-        target = _first_frame(A11Y.resolve(app["ref"]))
-        if target is None:
+        frame = _first_frame_obj(A11Y.resolve(app["ref"]))
+        if frame is None:
             windows.append({"app": app["name"], "title": "", "ref": app["ref"], "pid": app["pid"]})
             continue
-        title, states = target
+        title = frame.get_name() or ""
         windows.append({
             "app": app["name"],
             "title": title,
             "ref": app["ref"],
             "pid": app["pid"],
-            "active": "active" in states or "focused" in states,
+            "active": _window_is_active(frame),
         })
         del node
     return {"windows": windows, "count": len(windows)}
+
+
+def tool_window_activate(args: dict) -> dict:
+    _guard_input("activate a window", args)
+    title = str(args.get("title") or "").strip()
+    app = str(args.get("app") or "").strip()
+    if not title and not app:
+        raise ToolError("window_activate needs either a title substring or an app name")
+    rows = _frame_rows()
+    match = _match_window(rows, title, app)
+    if match is None:
+        known = sorted({f"{row['app']}: {row['title']}" for row in rows if row["title"]})[:8]
+        raise ToolError(
+            "no window matches "
+            + (f"title {title!r} " if title else "")
+            + (f"app {app!r}" if app else "")
+            + ("; known windows: " + "; ".join(known) if known else "")
+        )
+    window = {"app": match["app"], "title": match["title"]}
+    if match["active"]:
+        return {"activated": True, "method": "already-active", "window": window, "tried": []}
+
+    tried: list[dict] = []
+    needle = title or match["title"]
+
+    # XWayland windows answer to xdotool; native Wayland ones never show up here.
+    if needle:
+        if not os.environ.get("DISPLAY"):
+            tried.append({"method": "xdotool", "result": "no DISPLAY in this session"})
+        else:
+            code, out = _xdotool("search", "--name", needle)
+            ids = [line for line in out.splitlines() if line.strip().isdigit()] if code == 0 else []
+            if not ids:
+                tried.append({"method": "xdotool", "result": "no X11 match (native Wayland window)"})
+            for wid in ids[:4]:
+                _xdotool("windowactivate", wid)
+                if _wait_active(match["title"], 1.2):
+                    return {"activated": True, "method": "xdotool", "window": window, "tried": tried}
+            else:
+                if ids:
+                    tried.append({"method": "xdotool", "result": "activate did not raise it"})
+
+    try:
+        iface = match["acc"].get_action_iface()
+        if iface is not None and iface.get_n_actions() > 0:
+            iface.do_action(0)
+            if _wait_active(match["title"], 1.0):
+                return {"activated": True, "method": "atspi", "window": window, "tried": tried}
+            tried.append({"method": "atspi", "result": "default action did not raise it"})
+        else:
+            tried.append({"method": "atspi", "result": "frame exposes no actions"})
+    except Exception as error:  # noqa: BLE001
+        tried.append({"method": "atspi", "result": str(error)})
+
+    cycles = max(1, min(int(args.get("max_cycles", WINDOW_ACTIVATE_MAX_CYCLES)), 30))
+    try:
+        for _ in range(cycles):
+            controller().key("alt+Tab")
+            time.sleep(0.35)
+            if _is_active(match["title"]):
+                return {"activated": True, "method": "alt-tab", "window": window, "tried": tried}
+        tried.append({"method": "alt-tab", "result": f"{cycles} cycles without reaching it"})
+    except cu_input.InputError as error:
+        tried.append({"method": "alt-tab", "result": str(error)})
+    except Exception as error:  # noqa: BLE001
+        tried.append({"method": "alt-tab", "result": str(error)})
+
+    return {
+        "activated": False,
+        "method": "none",
+        "window": window,
+        "tried": tried,
+        "hint": (
+            "none of the three strategies raised it: X11 sees only XWayland surfaces, the "
+            "accessibility default action is a no-op for most toolkits, and Alt+Tab needs "
+            "the uinput keyboard. Raise it by hand, or pass a more distinctive title"
+        ),
+    }
+
+
+WAIT_CONDITIONS = ("window", "window_active", "ui", "idle_at_least")
+
+
+def _check_condition(condition: dict) -> tuple[bool, dict]:
+    for key in WAIT_CONDITIONS:
+        if key not in condition:
+            continue
+        if key == "window":
+            spec = condition["window"]
+            if isinstance(spec, str):
+                spec = {"title": spec}
+            if not isinstance(spec, dict):
+                raise ToolError("condition.window must be a title string or an object")
+            want = bool(spec.get("exists", True))
+            rows = _frame_rows()
+            hit = _match_window(rows, str(spec.get("title") or ""), str(spec.get("app") or ""))
+            return (hit is not None) == want, {"windows": len(rows), "found": hit is not None}
+        if key == "window_active":
+            spec = condition["window_active"]
+            needle = str(spec.get("title") if isinstance(spec, dict) else spec or "").lower()
+            if not needle:
+                raise ToolError("condition.window_active needs a title substring")
+            active = [row["title"] for row in _frame_rows() if row["active"]]
+            hit = any(needle in (title or "").lower() for title in active)
+            return hit, {"active": active[:6]}
+        if key == "ui":
+            spec = condition["ui"]
+            if not isinstance(spec, dict):
+                raise ToolError("condition.ui must be an object such as {app, name, role}")
+            hits = A11Y.find(
+                query=spec.get("name"),
+                role=spec.get("role"),
+                app=spec.get("app"),
+                limit=3,
+                timeout_s=2.0,
+            )
+            return len(hits) > 0, {"matches": len(hits)}
+        idle = cu_sys.idle_ms()
+        want_idle = int(condition["idle_at_least"])
+        return (idle is not None and idle >= want_idle), {"idle_ms": idle}
+    raise ToolError(
+        "condition must contain one of: " + ", ".join(WAIT_CONDITIONS) + " (got " + repr(sorted(condition)) + ")"
+    )
+
+
+def tool_wait_until(args: dict) -> dict:
+    condition = args.get("condition")
+    if not isinstance(condition, dict) or not condition:
+        raise ToolError(
+            "wait_until needs a condition object, for example "
+            '{"window": {"title": "Build finished"}} or {"window_active": "Chrome"}'
+        )
+    timeout_ms = max(100, min(int(args.get("timeout_ms", 15000)), 120000))
+    interval_ms = max(80, min(int(args.get("interval_ms", 300)), 5000))
+    started = time.monotonic()
+    deadline = started + timeout_ms / 1000.0
+    polls = 0
+    detail: dict = {}
+    satisfied = False
+    while True:
+        polls += 1
+        try:
+            satisfied, detail = _check_condition(condition)
+        except ToolError:
+            raise
+        except Exception as error:  # noqa: BLE001
+            detail = {"error": str(error)}
+            satisfied = False
+        if satisfied or time.monotonic() >= deadline:
+            break
+        time.sleep(interval_ms / 1000.0)
+    elapsed_ms = int((time.monotonic() - started) * 1000)
+    return {
+        "satisfied": satisfied,
+        "waited_ms": elapsed_ms,
+        "polls": polls,
+        "timeout_ms": timeout_ms,
+        "condition": condition,
+        "state": detail,
+    }
+
+
+def _first_frame_obj(app):
+    """The first frame child of an application, or None."""
+    if app is None:
+        return None
+    try:
+        count = app.get_child_count()
+    except Exception:  # noqa: BLE001
+        return None
+    for index in range(min(count, 4)):
+        try:
+            child = app.get_child_at_index(index)
+            if child is None:
+                continue
+            if (child.get_role_name() or "") == "frame":
+                return child
+        except Exception:  # noqa: BLE001
+            continue
+    return None
 
 
 def _first_frame(app):
@@ -566,6 +747,127 @@ def _first_frame(app):
         except Exception:  # noqa: BLE001
             continue
     return None
+
+
+# --------------------------------------------------------------------------- #
+# Windows: enumerate frames, raise one, wait for conditions
+# --------------------------------------------------------------------------- #
+
+WINDOW_ACTIVATE_MAX_CYCLES = int(os.environ.get("DSH_LINUX_CU_MAX_TAB_CYCLES", "12"))
+
+
+def _xdotool(*argv: str, timeout: float = 3.0) -> tuple[int, str]:
+    """Run xdotool against the XWayland display; (127, "") when unavailable."""
+    if not os.environ.get("DISPLAY"):
+        return (127, "")
+    try:
+        done = subprocess.run(
+            ["xdotool", *argv], capture_output=True, text=True, timeout=timeout
+        )
+    except (OSError, subprocess.SubprocessError):
+        return (127, "")
+    return (done.returncode, (done.stdout or "").strip())
+
+
+def _window_is_active(acc) -> bool:
+    """True when the toolkit marks this window ACTIVE (raised/focused).
+
+    cu_a11y.STATE_FLAGS stops at FOCUSED, and most toolkits set ACTIVE on the
+    toplevel frame instead, so the flag is queried directly here.
+    """
+    try:
+        state_set = acc.get_state_set()
+    except Exception:  # noqa: BLE001
+        return False
+    for flag in ("ACTIVE", "FOCUSED"):
+        value = getattr(cu_a11y.Atspi.StateType, flag, None)
+        if value is None:
+            continue
+        try:
+            if state_set.contains(value):
+                return True
+        except Exception:  # noqa: BLE001
+            return False
+    return False
+
+
+def _frame_rows() -> list[dict]:
+    """Every top-level window frame the accessibility bus can see."""
+    rows: list[dict] = []
+    for app in A11Y.apps(max_age=1.5):
+        try:
+            target = A11Y.resolve(app["ref"])
+            if target is None:
+                continue
+            count = target.get_child_count()
+        except Exception:  # noqa: BLE001
+            continue
+        for index in range(min(count, 4)):
+            try:
+                child = target.get_child_at_index(index)
+                if child is None or (child.get_role_name() or "") != "frame":
+                    continue
+            except Exception:  # noqa: BLE001
+                continue
+            active = _window_is_active(child)
+            rows.append(
+                {
+                    "app": app.get("name") or "",
+                    "title": child.get_name() or "",
+                    "ref": app.get("ref"),
+                    "pid": app.get("pid"),
+                    "active": active,
+                    "acc": child,
+                }
+            )
+            break
+    return rows
+
+
+def _match_window(rows: list[dict], title: str, app: str) -> dict | None:
+    """Prefer an exact title, then a title substring, then the app name."""
+    needle = (title or "").strip().lower()
+    app_needle = (app or "").strip().lower()
+    if needle:
+        for row in rows:
+            if (row["title"] or "").lower() == needle:
+                return row
+        for row in rows:
+            if needle in (row["title"] or "").lower():
+                return row
+        for row in rows:
+            if needle in (row["app"] or "").lower():
+                return row
+    if app_needle:
+        for row in rows:
+            if (row["app"] or "").lower() == app_needle:
+                return row
+        for row in rows:
+            if app_needle in (row["app"] or "").lower():
+                return row
+    return None
+
+
+def _is_active(title: str) -> bool:
+    needle = (title or "").strip().lower()
+    if not needle:
+        return False
+    for row in _frame_rows():
+        if not row["active"]:
+            continue
+        if (row["title"] or "").lower() == needle or needle in (row["title"] or "").lower():
+            return True
+    return False
+
+
+def _wait_active(title: str, timeout_s: float) -> bool:
+    deadline = time.monotonic() + timeout_s
+    while time.monotonic() < deadline:
+        if _is_active(title):
+            return True
+        time.sleep(0.12)
+    return _is_active(title)
+
 
 
 def tool_display_info(args: dict) -> dict:
@@ -1041,6 +1343,55 @@ TOOLS: list[dict] = [
         "description": "List application windows with their title and which one looks active.",
         "inputSchema": {"type": "object", "properties": {}},
         "handler": tool_window_list,
+    },
+    {
+        "name": "window_activate",
+        "description": (
+            "Raise a window by title substring (or app name) and report which method worked: "
+            "xdotool for XWayland surfaces, the AT-SPI default action, or Alt+Tab cycling for "
+            "native Wayland windows."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "title": {"type": "string", "description": "Case-insensitive substring of the window title."},
+                "app": {"type": "string", "description": "Application name, used when the title is unknown."},
+                "max_cycles": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 30,
+                    "default": 12,
+                    "description": "How many Alt+Tab presses to try before giving up.",
+                },
+                "allow_active_input": ALLOW_ACTIVE_PROP,
+            },
+        },
+        "handler": tool_window_activate,
+    },
+    {
+        "name": "wait_until",
+        "description": (
+            "Poll the desktop until a condition holds, instead of sleeping a fixed time: a window "
+            "appears or disappears, a window becomes active, an accessibility node shows up, or the "
+            "user has been idle long enough. Returns satisfied=false on timeout with the last state."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "condition": {
+                    "type": "object",
+                    "description": (
+                        'One of: {"window": {"title": "...", "app": "...", "exists": true}}, '
+                        '{"window_active": "Chrome"}, {"ui": {"app": "...", "name": "...", "role": "..."}}, '
+                        '{"idle_at_least": 60000}.'
+                    ),
+                },
+                "timeout_ms": {"type": "integer", "minimum": 100, "maximum": 120000, "default": 15000},
+                "interval_ms": {"type": "integer", "minimum": 80, "maximum": 5000, "default": 300},
+            },
+            "required": ["condition"],
+        },
+        "handler": tool_wait_until,
     },
     {
         "name": "display_info",

@@ -24,8 +24,10 @@ English summary at the bottom.
 | "注册表"类比 | `gsettings` / dconf |
 | 通知 | `notify-send` |
 | 显示器信息 | Mutter `DisplayConfig`（坐标换算、多屏） |
+| 窗口操作 | `window_list` 列出标题与是否 `active`；`window_activate` 按标题子串把窗口抬到前台——XWayland 走 `xdotool`，原生 Wayland 用 Alt+Tab 循环并以无障碍树校验，返回里会说明这次用的是哪条路 |
+| 等待条件 | `wait_until` 轮询直到满足条件：窗口出现/消失、某个窗口变成前台、某个 UI 节点出现、或用户空闲满多少毫秒；超时返回 `satisfied: false` 与最后一轮观察到的状态，不抛错 |
 
-28 个工具，分组见 [docs/DETAIL.md](docs/DETAIL.md)。模型调用方式：`mcp__linux__screenshot`、`mcp__linux__click`、`mcp__linux__ui_find` ……
+30 个工具，分组见 [docs/DETAIL.md](docs/DETAIL.md)。模型调用方式：`mcp__linux__screenshot`、`mcp__linux__click`、`mcp__linux__ui_find` ……
 
 ## 安装
 
@@ -64,6 +66,7 @@ sudo ./linux-computer-use-prep.sh --verify   # 不需要 sudo
 - 截屏必须走 portal：第一次会弹一次系统授权框（GNOME 记住你的选择），之后每次截图静默、约 0.5 秒。ScreenCast 流式路径（`DSH_LINUX_CU_SCREENCAST=1` 可强制）在 GNOME 46 上画面静止时不产帧，只当兜底。
 - **锁屏时只截图、不注入**：服务器会向 `org.gnome.ScreenSaver.GetActive` 查询锁屏状态，处于锁屏时 `click` / `key` / `type_text` 等全部拒绝执行（锁屏焦点在密码框上，误打就会往密码里塞字符），`screenshot` 仍可用。`desktop_status` 的 `session.locked` 会告诉你当前状态。
 - **你在用电脑时也不注入**：服务器用 `org.gnome.Mutter.IdleMonitor.GetIdletime` 查空闲时间，最近 60 秒内有键鼠动作就拒绝点击/输入（否则自动化会和你抢光标）。这一条可以放行：工具参数带 `allow_active_input: true`（模型在你明确让它代操作时会带），或设环境变量 `DSH_LINUX_CU_ALLOW_ACTIVE_INPUT=1`；阈值用 `DSH_LINUX_CU_IDLE_GUARD_MS` 调（默认 `60000`）。截图、读 UI 树、读文件不受影响。`desktop_status` 的 `session.idle_ms` 就是当前空闲毫秒数。
+- **原生 Wayland 窗口没法被 X11 抬起**：Chrome、GNOME 自家应用在 `xdotool search` 里完全不存在，`window_activate` 对它们会用 Alt+Tab 循环（需要 uinput 键盘可用）。如果三条路都失败，返回 `activated: false` 与 `tried` 明细，而不是假装成功。
 - **截图要看清小字就用 `region`**：整屏 4480×1440 缩到 1400 宽，11px 的小字会糊成一团；传 `{"region": {"x":120,"y":140,"width":900,"height":620}, "scale":1.0}` 只截那块、按原尺寸返回，既清楚又省 token。`space: "screenshot"` 会自动加回偏移，不用自己算。
 - 只能工作在**当前登录的图形会话**里；SSH / 无头环境下没有桌面可控制。
 
