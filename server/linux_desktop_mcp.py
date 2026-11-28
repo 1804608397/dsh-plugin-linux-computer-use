@@ -412,6 +412,12 @@ def tool_screenshot(args: dict) -> dict:
         match = _resolve_window(str(window_arg), str(args.get("window_app") or ""))
         rect, source = _window_geometry(match)
         if rect is None:
+            if source == "hidden":
+                raise ToolError(
+                    f"{match['title'] or match['app']} exists but is not on screen right now "
+                    "(hidden, minimised or on another workspace); raise it with window_activate "
+                    "first."
+                )
             raise ToolError(
                 f"{match['title'] or match['app']} is a native Wayland surface: neither AT-SPI nor "
                 "X11 publishes its geometry, so it cannot be cropped by name. Capture its monitor "
@@ -1123,9 +1129,12 @@ def tool_wait_until(args: dict) -> dict:
 def _window_geometry(match: dict) -> tuple[dict | None, str]:
     """Best-effort screen rectangle for a window, plus where it came from.
 
-    AT-SPI is asked first because GTK3/Qt/X11 windows publish their toplevel
-    rectangle there. Native Wayland surfaces publish nothing, and X11 cannot see
-    them either, so the caller gets (None, "unknown") and has to work around it.
+    AT-SPI is asked first because GTK3/Qt windows publish their toplevel
+    rectangle there. XWayland windows are then measured through xdotool, but only
+    while they are actually on screen: a hidden or minimised window keeps its old
+    geometry in X11, and reporting that would aim a capture at bare wallpaper.
+    Native Wayland surfaces publish nothing and X11 cannot see them, so the
+    caller gets (None, "unknown") and has to work around it.
     """
     acc = match.get("acc")
     if acc is not None:
@@ -1133,40 +1142,41 @@ def _window_geometry(match: dict) -> tuple[dict | None, str]:
         if rect:
             return (rect, "atspi")
     title = match.get("title") or ""
-    if title:
-        # A hidden or minimised window keeps its geometry in X11, so ask for the
-        # visible ones first and only then fall back to the full list.
-        rc, out = _xdotool("search", "--onlyvisible", "--name", title)
-        if rc != 0 or not out:
-            rc, out = _xdotool("search", "--name", title)
-        if rc == 0 and out:
-            # A title search also matches helper and popup surfaces (Bitwarden has
-            # 10x10 ones), so take the biggest rectangle instead of the first id.
-            best: dict | None = None
-            for window_id in out.splitlines()[:12]:
-                rc2, geometry = _xdotool("getwindowgeometry", "--shell", window_id.strip())
-                if rc2 != 0:
-                    continue
-                values: dict[str, str] = {}
-                for line in geometry.splitlines():
-                    if "=" in line:
-                        key, _, value = line.partition("=")
-                        values[key.strip()] = value.strip()
-                try:
-                    rect = {
-                        "x": int(values["X"]),
-                        "y": int(values["Y"]),
-                        "width": int(values["WIDTH"]),
-                        "height": int(values["HEIGHT"]),
-                    }
-                except (KeyError, ValueError):
-                    continue
-                if rect["width"] < 50 or rect["height"] < 50:
-                    continue
-                if best is None or rect["width"] * rect["height"] > best["width"] * best["height"]:
-                    best = rect
-            if best is not None:
-                return (best, "x11")
+    if not title:
+        return (None, "unknown")
+    rc, out = _xdotool("search", "--onlyvisible", "--name", title)
+    if rc != 0 or not out:
+        rc_all, out_all = _xdotool("search", "--name", title)
+        if rc_all == 0 and out_all:
+            return (None, "hidden")
+        return (None, "unknown")
+    # A title search also matches helper and popup surfaces (Bitwarden has 10x10
+    # ones), so take the biggest rectangle instead of the first id.
+    best: dict | None = None
+    for window_id in out.splitlines()[:12]:
+        rc2, geometry = _xdotool("getwindowgeometry", "--shell", window_id.strip())
+        if rc2 != 0:
+            continue
+        values: dict[str, str] = {}
+        for line in geometry.splitlines():
+            if "=" in line:
+                key, _, value = line.partition("=")
+                values[key.strip()] = value.strip()
+        try:
+            rect = {
+                "x": int(values["X"]),
+                "y": int(values["Y"]),
+                "width": int(values["WIDTH"]),
+                "height": int(values["HEIGHT"]),
+            }
+        except (KeyError, ValueError):
+            continue
+        if rect["width"] < 50 or rect["height"] < 50:
+            continue
+        if best is None or rect["width"] * rect["height"] > best["width"] * best["height"]:
+            best = rect
+    if best is not None:
+        return (best, "x11")
     return (None, "unknown")
 
 
@@ -1193,12 +1203,19 @@ def tool_window_rect(args: dict) -> dict:
         "source": source,
     }
     if rect is None:
-        payload["hint"] = (
-            "this window is a native Wayland surface: neither AT-SPI nor X11 publishes its "
-            "geometry, so it cannot be aimed at by name. Capture the monitor it lives on "
-            "(screenshot with monitor=...) and crop by eye, or act on its elements with "
-            "ui_find / click (text=...)."
-        )
+        if source == "hidden":
+            payload["hint"] = (
+                "this window exists but is not on screen right now (hidden to the tray, "
+                "minimised, or on another workspace), so there is no rectangle to report. "
+                "Raise it first with window_activate, then ask again."
+            )
+        else:
+            payload["hint"] = (
+                "this window is a native Wayland surface: neither AT-SPI nor X11 publishes its "
+                "geometry, so it cannot be aimed at by name. Capture the monitor it lives on "
+                "(screenshot with monitor=...) and crop by eye, or act on its elements with "
+                "ui_find / click (text=...)."
+            )
     return payload
 
 
