@@ -17,6 +17,10 @@ class ServerGone(RuntimeError):
     """The server process died before answering (no session, no bus, ...)."""
 
 
+class ServerGone(RuntimeError):
+    """The server process died: a desktop service it needs is not available."""
+
+
 class Server:
     """Spawn the real server and talk to it over stdio, exactly like DSH does."""
 
@@ -43,8 +47,11 @@ class Server:
         payload = {"jsonrpc": "2.0", "id": self._next_id, "method": method}
         payload["params"] = params or {}
         assert self.proc.stdin is not None
-        self.proc.stdin.write(json.dumps(payload) + "\n")
-        self.proc.stdin.flush()
+        try:
+            self.proc.stdin.write(json.dumps(payload) + "\n")
+            self.proc.stdin.flush()
+        except (BrokenPipeError, ValueError) as error:
+            raise ServerGone(f"the server exited before the request could be sent: {error}") from error
         return self._next_id
 
     def wait(self, request_id: int) -> dict:
