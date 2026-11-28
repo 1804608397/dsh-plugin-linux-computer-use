@@ -13,6 +13,10 @@ SERVER_DIR = pathlib.Path(__file__).resolve().parent.parent / "server"
 SERVER = SERVER_DIR / "linux_desktop_mcp.py"
 
 
+class ServerGone(RuntimeError):
+    """The server process died before answering (no session, no bus, ...)."""
+
+
 class Server:
     """Spawn the real server and talk to it over stdio, exactly like DSH does."""
 
@@ -48,7 +52,7 @@ class Server:
         while True:
             line = self.proc.stdout.readline()
             if not line:
-                raise AssertionError("the server exited before answering")
+                raise ServerGone("the server exited before answering")
             message = json.loads(line)
             if message.get("id") == request_id:
                 return message
@@ -101,3 +105,10 @@ class Server:
             self.proc.wait(timeout=10)
         except subprocess.TimeoutExpired:
             self.proc.kill()
+            self.proc.wait(timeout=10)
+        for stream in (self.proc.stdout, self.proc.stderr):
+            if stream is not None:
+                try:
+                    stream.close()
+                except OSError:
+                    pass

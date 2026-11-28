@@ -1,22 +1,41 @@
-"""Arguments that must be rejected, and the wording users will read."""
+"""Arguments that must be rejected, and the wording users will read.
+
+Everything that needs a live GNOME session (Mutter DisplayConfig, the
+accessibility bus) is skipped when the machine does not have one, so the same
+suite runs on a headless CI runner.
+"""
 
 from __future__ import annotations
 
 import unittest
 
-from helpers import Server
+from helpers import Server, ServerGone
 
 
 class ValidationTest(unittest.TestCase):
-    @classmethod
-    def setUpClass(cls):
-        cls.server = Server()
-        cls.server.initialize()
-        cls.tools = cls.server.tools()
+    def setUp(self):
+        self.server = Server()
+        self.server.initialize()
+        self.status = {}
+        try:
+            _, self.status = self.server.tool("desktop_status")
+        except ServerGone:
+            self.status = {}
 
-    @classmethod
-    def tearDownClass(cls):
-        cls.server.close()
+    def tearDown(self):
+        self.server.close()
+
+    def skip_if(self, condition: bool, reason: str) -> None:
+        if condition:
+            self.skipTest(reason)
+
+    @property
+    def has_display(self) -> bool:
+        return "error" not in (self.status.get("display") or {})
+
+    @property
+    def has_a11y(self) -> bool:
+        return (self.status.get("a11y") or {}).get("apps_visible", 0) > 0
 
     def test_region_requires_positive_size(self):
         text = self.server.error_text("screenshot", {"region": {"x": 0, "y": 0, "width": 0, "height": 10}})
@@ -31,7 +50,11 @@ class ValidationTest(unittest.TestCase):
         self.assertIn("scale must be positive", text)
 
     def test_unknown_window_names_the_next_step(self):
-        text = self.server.error_text("window_rect", {"title": "NoSuchWindowZZZ"})
+        self.skip_if(not self.has_a11y, "no accessibility bus on this machine")
+        try:
+            text = self.server.error_text("window_rect", {"title": "NoSuchWindowZZZ"})
+        except ServerGone:
+            self.skipTest("the server cannot reach AT-SPI here")
         self.assertIn("no window matches", text)
         self.assertIn("window_list", text)
 
@@ -40,11 +63,16 @@ class ValidationTest(unittest.TestCase):
         self.assertIn("title", text)
 
     def test_monitor_unknown_lists_the_available_ones(self):
+        self.skip_if(not self.has_display, "no Mutter DisplayConfig on this machine")
         text = self.server.error_text("screenshot", {"monitor": "NOPE"})
         self.assertIn("no monitor matches", text)
 
     def test_monitor_and_region_are_exclusive(self):
-        text = self.server.error_text("screenshot", {"monitor": "primary", "region": {"x": 0, "y": 0, "width": 10, "height": 10}})
+        self.skip_if(not self.has_display, "no Mutter DisplayConfig on this machine")
+        text = self.server.error_text(
+            "screenshot",
+            {"monitor": "primary", "region": {"x": 0, "y": 0, "width": 10, "height": 10}},
+        )
         self.assertIn("not both", text)
 
     def test_wait_until_rejects_unknown_condition(self):
