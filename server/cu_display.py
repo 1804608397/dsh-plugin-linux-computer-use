@@ -609,3 +609,30 @@ def crop_and_scale(path: str, box: tuple[int, int, int, int], out_width: int) ->
         return png_size(path)
     except Exception:  # noqa: BLE001 - cropping is best effort
         return (width, height)
+
+
+def gray_grid(path: str) -> list[int]:
+    """Read a PNG as a flat list of 0-255 luminance values.
+
+    Used to tell "the screen changed" without comparing megabyte-sized PNGs:
+    capture a small slice, scale it to a handful of pixels, and diff the grid.
+    """
+    try:
+        gi.require_version("GdkPixbuf", "2.0")
+        from gi.repository import GdkPixbuf
+
+        pixbuf = GdkPixbuf.Pixbuf.new_from_file(path)
+        width, height = pixbuf.get_width(), pixbuf.get_height()
+        channels = pixbuf.get_n_channels()
+        stride = pixbuf.get_rowstride()
+        data = pixbuf.get_pixels()
+        grid: list[int] = []
+        for y in range(height):
+            row = y * stride
+            for x in range(width):
+                index = row + x * channels
+                red, green, blue = data[index], data[index + 1], data[index + 2]
+                grid.append((red * 299 + green * 587 + blue * 114) // 1000)
+        return grid
+    except Exception:  # noqa: BLE001 - a signature is best effort
+        return []

@@ -45,7 +45,7 @@ reload the page. `linux_mcp_doctor` works either way.
 
 | Group | Tools |
 | --- | --- |
-| Vision | `screenshot` — PNG + size + path; `region` crops before scaling (sharp text), `scale` sets pixels per logical pixel, `ref` crops to one element, `marks` draws numbered boxes around clickable elements and returns them in screenshot pixels; the first call asks for permission once |
+| Vision | `screenshot` — PNG + size + path; `region` crops before scaling (sharp text), `monitor` grabs one whole screen by connector name, `scale` sets pixels per logical pixel, `ref` crops to one element, `marks` draws numbered boxes around clickable elements and returns them in screenshot pixels; the first call asks for permission once |
 | Tree | `ui_apps`, `ui_tree` (prune with `roles` + `compact`), `ui_find`, `ui_describe`, `ui_text` |
 | Act on elements | `ui_action` (invoke/press/toggle), `ui_focus`, `ui_set_text` |
 | Pointer | `click` (coordinates, or `text` to hit an element by name), `click_ref` (by accessibility ref), `move`, `drag`, `scroll`, `pointer_button` (hold/release) |
@@ -53,7 +53,7 @@ reload the page. `linux_mcp_doctor` works either way.
 | Clipboard | `clipboard_get`, `clipboard_set` |
 | System | `process_list`, `process_kill`, `launch_app`, `settings_get`, `settings_set`, `settings_list_keys`, `notify`, `display_info`, `desktop_status` |
 | Windows | `window_list` (titles + `active`), `window_activate` — raises a window by title substring; XWayland through `xdotool`, native Wayland by cycling Alt+Tab then Super+Tab and checking the accessibility tree (GNOME binds Alt+Tab to windows of the current app and Super+Tab to applications), and the reply names the strategy that worked |
-| Waiting | `wait_until` — poll until `window` appears/disappears, `window_active` is raised, a `ui` node shows up, or `idle_at_least` ms pass; on timeout it returns `satisfied: false` with the last state instead of throwing |
+| Waiting | `wait_until` — poll until `window` appears/disappears, `window_active` is raised, a `ui` node shows up, a `file` reaches `min_bytes` and stops growing for `stable_ms`, the pixels of a `region` change by more than `threshold` (`screenshot_changed`), or `idle_at_least` ms pass; on timeout it returns `satisfied: false` with the last state instead of throwing |
 | Batching | `sequence` — run up to 25 tools in one call, in order; the reply is a per-step report (`{step, op, ok, ms, error?}`) plus the **last** step's output (images included), so a fixed flow costs one round trip instead of one per step. `stop_on_error: false` keeps going, `allow_active_input: true` covers every injecting step at once, and the step cap can be raised with `DSH_LINUX_CU_SEQUENCE_MAX_STEPS` |
 | Unlocking (opt-in) | `unlock_screen` — only listed while the unlock policy is on; see below |
 

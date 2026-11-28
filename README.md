@@ -25,9 +25,9 @@ English summary at the bottom.
 | 通知 | `notify-send` |
 | 显示器信息 | Mutter `DisplayConfig`（坐标换算、多屏） |
 | 窗口操作 | `window_list` 列出标题与是否 `active`；`window_activate` 按标题子串把窗口抬到前台——XWayland 走 `xdotool`，原生 Wayland 用 Alt+Tab / Super+Tab 循环并以无障碍树校验（GNOME 下 Alt+Tab 只切本应用窗口，Super+Tab 才切应用），返回里会说明这次用的是哪条路 |
-| 等待条件 | `wait_until` 轮询直到满足条件：窗口出现/消失、某个窗口变成前台、某个 UI 节点出现、或用户空闲满多少毫秒；超时返回 `satisfied: false` 与最后一轮观察到的状态，不抛错 |
+| 等待条件 | `wait_until` 轮询直到满足条件：窗口出现/消失、某个窗口变成前台、某个 UI 节点出现、文件长到指定大小并停止变化（下载完成）、某块区域的像素发生变化（转圈结束、页面加载完）、或用户空闲满多少毫秒；超时返回 `satisfied: false` 与最后一轮观察到的状态，不抛错 |
 
-33 个工具，分组见 [docs/DETAIL.md](docs/DETAIL.md)。模型调用方式：`mcp__linux__screenshot`、`mcp__linux__click`、`mcp__linux__ui_find` ……
+32 个工具（打开解锁策略后 33 个），分组见 [docs/DETAIL.md](docs/DETAIL.md)。模型调用方式：`mcp__linux__screenshot`、`mcp__linux__click`、`mcp__linux__ui_find` ……
 
 ## 安装
 
@@ -80,6 +80,7 @@ sudo ./linux-computer-use-prep.sh --verify   # 不需要 sudo
 - **锁屏时只截图、不注入**：服务器会向 `org.gnome.ScreenSaver.GetActive` 查询锁屏状态，处于锁屏时 `click` / `key` / `type_text` 等全部拒绝执行（锁屏焦点在密码框上，误打就会往密码里塞字符），`screenshot` 仍可用。`desktop_status` 的 `session.locked` 会告诉你当前状态。
 - **你在用电脑时也不注入**：服务器用 `org.gnome.Mutter.IdleMonitor.GetIdletime` 查空闲时间，最近 60 秒内有键鼠动作就拒绝点击/输入（否则自动化会和你抢光标）。这一条可以放行：工具参数带 `allow_active_input: true`（模型在你明确让它代操作时会带），或设环境变量 `DSH_LINUX_CU_ALLOW_ACTIVE_INPUT=1`；阈值用 `DSH_LINUX_CU_IDLE_GUARD_MS` 调（默认 `60000`）。截图、读 UI 树、读文件不受影响。`desktop_status` 的 `session.idle_ms` 就是当前空闲毫秒数。
 - **原生 Wayland 窗口没法被 X11 抬起**：Chrome、GNOME 自家应用在 `xdotool search` 里完全不存在，`window_activate` 对它们会用 Alt+Tab（本应用内切窗口）与 Super+Tab（切应用）循环，需要 uinput 键盘可用。如果三条路都失败，返回 `activated: false` 与 `tried` 明细，而不是假装成功。
+- **只想截某一块屏，就传 `monitor`**：`{"monitor": "eDP-1", "scale": 1.0}`（或 `"primary"`）直接按连接器名截整块显示器，不用自己加 `x` 偏移；和 `region`/`ref` 互斥，返回值里会带 `monitor: {connector, x, y, width, height}`。
 - **截图要看清小字就用 `region`**：整屏 4480×1440 缩到 1400 宽，11px 的小字会糊成一团；传 `{"region": {"x":120,"y":140,"width":900,"height":620}, "scale":1.0}` 只截那块、按原尺寸返回，既清楚又省 token。`space: "screenshot"` 会自动加回偏移，不用自己算。
 - **多显示器时，先 `display_info` 再裁 `region`**：`region` 用的是**整块桌面**的逻辑坐标（例如 eDP-1 从 `x=2560` 起），不是某一块屏的局部坐标。拿整屏缩略图估坐标很容易把窗口和壁纸搞混（我就干过：截了左屏左上角，还以为计算器是空的）。`display_info` 会给出每个显示器的 `{connector, x, y, width, height, primary}`，照它算。
 - **`click {text}` / `click_ref` 只对"暴露出来且有动作"的控件有效**：`click {text}` 的顺序是「AT-SPI 找元素 → 执行它的 click 动作 → 找不到才退回指针点击」。GTK 4 应用常常**平时不暴露按钮**（GNOME Calculator 的键盘区在 `ui_tree` 里只剩 `frame → panel`，`ui_find` 也找不到，数字键根本点不到），这时它会明确报 `no element whose name or text matches ...`，不会假装成功。先用 `ui_find` 确认元素存在再点。

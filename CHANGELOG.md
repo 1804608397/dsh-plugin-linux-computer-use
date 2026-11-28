@@ -5,6 +5,21 @@
 
 # Changelog
 
+## 0.7.0 - 2026-11-28
+
+- **`screenshot {monitor}`**: name a connector (`eDP-1`, `HDMI-1`) or `"primary"` instead of
+  computing a `region` offset. `region` is whole-desktop coordinates, so on a two-monitor
+  desktop it is easy to crop the wrong screen by forgetting `x=2560`; the returned payload now
+  also carries the monitor rectangle it used. Mutually exclusive with `region` and `ref`.
+- **`wait_until {file}`**: an `/tmp`-style download wait without polling in the model loop.
+  Accepts `{path, exists, min_bytes, stable_ms}` — `stable_ms` keeps polling until the size stops
+  changing, which is what "the download finished" actually means.
+- **`wait_until {screenshot_changed}`**: capture a `region` (or `monitor`), scale it to a few
+  dozen pixels and diff the grey levels, so "the spinner went away" or "the page finished
+  loading" becomes a condition instead of a `sleep`. `threshold` defaults to 0.02; the baseline
+  belongs to the call, so one call does the whole wait.
+- Server 1.6.0.
+
 ## 0.6.1 - 2026-11-28
 
 - `desktop_status` no longer fails when the login keyring is locked: the secret

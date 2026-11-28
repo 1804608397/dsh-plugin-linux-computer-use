@@ -47,7 +47,7 @@ import cu_sys  # noqa: E402
 import cu_unlock  # noqa: E402
 
 SERVER_NAME = "linux-desktop-mcp"
-SERVER_VERSION = "1.5.1"
+SERVER_VERSION = "1.6.0"
 PROTOCOL_VERSION = "2025-06-18"
 SUPPORTED_PROTOCOLS = {"2024-11-05", "2025-03-26", "2025-06-18"}
 LOG_PATH = os.path.join(cu_display.CACHE_DIR, "server.log")
@@ -204,6 +204,34 @@ def _parse_region(value) -> tuple[float, float, float, float] | None:
     return (x, y, w, h)
 
 
+def _resolve_monitor(name: str | None) -> tuple[str, tuple[float, float, float, float]]:
+    """Turn a connector name ("eDP-1") or "primary" into a logical rectangle.
+
+    ``region`` is expressed in whole-desktop coordinates, so a multi-monitor
+    user has to add the monitor offset by hand - and forgetting it silently
+    crops the wrong screen. Naming the monitor removes that failure mode.
+    """
+    current = layout()
+    monitors = list(getattr(current, "monitors", []) or [])
+    if not monitors:
+        raise ToolError("cannot read the monitor layout, so monitor= is unavailable; pass region instead")
+    wanted = str(name or "").strip().lower()
+    if wanted in ("", "primary", "main"):
+        for monitor in monitors:
+            if getattr(monitor, "primary", False):
+                return monitor.connector, (monitor.x, monitor.y, monitor.width, monitor.height)
+        first = monitors[0]
+        return first.connector, (first.x, first.y, first.width, first.height)
+    for monitor in monitors:
+        if monitor.connector.lower() == wanted:
+            return monitor.connector, (monitor.x, monitor.y, monitor.width, monitor.height)
+    for monitor in monitors:
+        if wanted in monitor.connector.lower():
+            return monitor.connector, (monitor.x, monitor.y, monitor.width, monitor.height)
+    names = ", ".join(f"{m.connector} ({m.width}x{m.height} at {m.x},{m.y})" for m in monitors)
+    raise ToolError(f"no monitor matches {name!r}; available: {names}")
+
+
 def capture_shot(
     max_width: int = SHOT_MAX_WIDTH,
     region: tuple[float, float, float, float] | None = None,
@@ -354,6 +382,23 @@ def tool_screenshot(args: dict) -> dict:
     scale = float(scale) if scale else None
     if scale is not None and scale <= 0:
         raise ToolError("scale must be positive (1.0 = one screenshot pixel per logical pixel)")
+    monitor_arg = args.get("monitor")
+    monitor: dict | str | None = monitor_arg
+    if monitor_arg:
+        if region is not None:
+            raise ToolError("pass either monitor or region, not both: monitor covers the whole screen, region is a slice of the desktop")
+        if args.get("ref"):
+            raise ToolError("pass either monitor or ref, not both")
+        connector, rect = _resolve_monitor(monitor_arg)
+        region = rect
+        if scale is None and max_width == SHOT_MAX_WIDTH and not args.get("max_width"):
+            scale = 1.0
+        current = layout()
+        for item in getattr(current, "monitors", []) or []:
+            if item.connector == connector:
+                monitor = {"connector": connector, "x": item.x, "y": item.y,
+                           "width": item.width, "height": item.height}
+                break
     ref = args.get("ref")
     if ref:
         if region is not None:
@@ -366,6 +411,8 @@ def tool_screenshot(args: dict) -> dict:
         if scale is None:
             scale = 1.0
     info = capture_shot(max_width, region=region, scale=scale)
+    if isinstance(monitor, dict):
+        info["monitor"] = monitor
     try:
         with open(info["path"], "rb") as handle:
             payload = handle.read()
@@ -875,10 +922,45 @@ def tool_window_activate(args: dict) -> dict:
     }
 
 
-WAIT_CONDITIONS = ("window", "window_active", "ui", "idle_at_least")
+WAIT_CONDITIONS = ("window", "window_active", "ui", "file", "screenshot_changed", "idle_at_least")
 
 
-def _check_condition(condition: dict) -> tuple[bool, dict]:
+def _region_signature(region: tuple[float, float, float, float] | None, cells: int = 12) -> list[int]:
+    """A tiny luminance grid of one slice of the screen, for "did it change?" checks."""
+    name = f"sig-{time.strftime('%Y%m%d-%H%M%S')}-{int(time.time() * 1000) % 1000:03d}.png"
+    path = os.path.join(cu_display.SHOT_DIR, name)
+    try:
+        cu_display.portal_screenshot(path)
+        current = layout()
+        raw_width, raw_height = cu_display.png_size(path)
+        physical = (raw_width / current.width) if current.width and raw_width else 1.0
+        if region is not None:
+            x, y, w, h = region
+            box = (
+                round(x * physical),
+                round(y * physical),
+                max(1, round(w * physical)),
+                max(1, round(h * physical)),
+            )
+        else:
+            box = (0, 0, raw_width, raw_height)
+        cu_display.crop_and_scale(path, box, max(4, cells))
+        return cu_display.gray_grid(path)
+    finally:
+        try:
+            os.unlink(path)
+        except OSError:
+            pass
+
+
+def _grid_distance(left: list[int], right: list[int]) -> float:
+    if not left or not right or len(left) != len(right):
+        return 1.0
+    return sum(abs(a - b) for a, b in zip(left, right)) / (len(left) * 255.0)
+
+
+def _check_condition(condition: dict, state: dict | None = None) -> tuple[bool, dict]:
+    state = state if state is not None else {}
     for key in WAIT_CONDITIONS:
         if key not in condition:
             continue
@@ -912,6 +994,61 @@ def _check_condition(condition: dict) -> tuple[bool, dict]:
                 timeout_s=2.0,
             )
             return len(hits) > 0, {"matches": len(hits)}
+        if key == "file":
+            spec = condition["file"]
+            if isinstance(spec, str):
+                spec = {"path": spec}
+            if not isinstance(spec, dict) or not spec.get("path"):
+                raise ToolError('condition.file must be a path or {"path": "...", "min_bytes": 0, "stable_ms": 0}')
+            target = os.path.expanduser(str(spec["path"]))
+            want = bool(spec.get("exists", True))
+            try:
+                size = os.path.getsize(target)
+                exists = True
+            except OSError:
+                exists, size = False, 0
+            if want is False:
+                return (not exists), {"path": target, "exists": exists}
+            if not exists:
+                state.pop(f"file:{target}", None)
+                return False, {"path": target, "exists": False}
+            minimum = int(spec.get("min_bytes") or 0)
+            if size < minimum:
+                state.pop(f"file:{target}", None)
+                return False, {"path": target, "exists": True, "bytes": size, "min_bytes": minimum}
+            stable_ms = int(spec.get("stable_ms") or 0)
+            if stable_ms <= 0:
+                return True, {"path": target, "exists": True, "bytes": size}
+            marker = state.get(f"file:{target}")
+            now = time.monotonic()
+            if not marker or marker[0] != size:
+                state[f"file:{target}"] = (size, now)
+                return False, {"path": target, "exists": True, "bytes": size, "stable_for_ms": 0}
+            settled = int((now - marker[1]) * 1000)
+            return settled >= stable_ms, {
+                "path": target, "exists": True, "bytes": size, "stable_for_ms": settled,
+            }
+        if key == "screenshot_changed":
+            spec = condition["screenshot_changed"]
+            if spec is True or spec is None:
+                spec = {}
+            if not isinstance(spec, dict):
+                raise ToolError('condition.screenshot_changed must be an object such as {"region": {...}, "threshold": 0.02}')
+            region = _parse_region(spec.get("region"))
+            if region is None and spec.get("monitor"):
+                _connector, rect = _resolve_monitor(spec.get("monitor"))
+                region = rect
+            threshold = float(spec.get("threshold", 0.02))
+            cells = int(spec.get("cells", 12))
+            grid = _region_signature(region, cells)
+            if not grid:
+                return False, {"error": "could not read the screen slice"}
+            baseline = state.get("signature")
+            if baseline is None:
+                state["signature"] = grid
+                return False, {"baseline": True, "cells": len(grid)}
+            distance = _grid_distance(baseline, grid)
+            return distance >= threshold, {"difference": round(distance, 4), "threshold": threshold}
         idle = cu_sys.idle_ms()
         want_idle = int(condition["idle_at_least"])
         return (idle is not None and idle >= want_idle), {"idle_ms": idle}
@@ -934,10 +1071,11 @@ def tool_wait_until(args: dict) -> dict:
     polls = 0
     detail: dict = {}
     satisfied = False
+    state: dict = {}
     while True:
         polls += 1
         try:
-            satisfied, detail = _check_condition(condition)
+            satisfied, detail = _check_condition(condition, state)
         except ToolError:
             raise
         except Exception as error:  # noqa: BLE001
@@ -1383,6 +1521,14 @@ TOOLS: list[dict] = [
                         "Takes precedence over max_width."
                     ),
                 },
+                "monitor": {
+                    "type": "string",
+                    "description": (
+                        "Capture one whole monitor by connector name (e.g. eDP-1, HDMI-1) or \"primary\". "
+                        "Region coordinates are whole-desktop, so this saves you from adding the monitor "
+                        "offset by hand and cropping the wrong screen. Cannot be combined with region or ref."
+                    ),
+                },
                 "ref": {
                     "type": "string",
                     "description": (
@@ -1776,8 +1922,10 @@ TOOLS: list[dict] = [
         "name": "wait_until",
         "description": (
             "Poll the desktop until a condition holds, instead of sleeping a fixed time: a window "
-            "appears or disappears, a window becomes active, an accessibility node shows up, or the "
-            "user has been idle long enough. Returns satisfied=false on timeout with the last state."
+            "appears or disappears, a window becomes active, an accessibility node shows up, a file "
+            "grows to a size and stops changing (downloads), the pixels of a region change (a spinner "
+            "ending, a page loading) with the screenshot_changed condition, or the user has been idle long "
+            "enough. Returns satisfied=false on timeout with the last state."
         ),
         "inputSchema": {
             "type": "object",
@@ -1787,7 +1935,11 @@ TOOLS: list[dict] = [
                     "description": (
                         'One of: {"window": {"title": "...", "app": "...", "exists": true}}, '
                         '{"window_active": "Chrome"}, {"ui": {"app": "...", "name": "...", "role": "..."}}, '
-                        '{"idle_at_least": 60000}.'
+                        '{"file": {"path": "~/Downloads/x.zip", "min_bytes": 1048576, "stable_ms": 800}}, '
+                        '{"screenshot_changed": {"region": {"x": 0, "y": 0, "width": 600, "height": 400}, "threshold": 0.02}}, '
+                        '{"idle_at_least": 60000}. The first condition key wins; file and screenshot_changed '
+                        'keep their own baseline between polls, so one call can wait for a download to finish '
+                        'or a spinner to go away without a sleep.'
                     ),
                 },
                 "timeout_ms": {"type": "integer", "minimum": 100, "maximum": 120000, "default": 15000},
