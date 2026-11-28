@@ -69,7 +69,8 @@ sudo ./linux-computer-use-prep.sh --verify   # 不需要 sudo
 
 - **`ui_tree` 先过滤再读**：`roles: ["push button", "entry"]` 只保留你要的节点类型，祖先会折叠成 `ref`/`role`/`name` 的路径；再加 `compact: true` 去掉 rect/states/text。实测同一屏 140 节点/10.2 KB → 20 节点/0.85 KB。
 - **`screenshot` 用 `region` + `scale: 1.0`**：先在 4480×1440 原图上裁剪再缩放，小字才清楚，token 也只有整屏的三分之一。
-- **看不清哪个能点就用 `marks: true`**：截图会围上带编号的框，同时返回 `marks: [{id, ref, role, name, x, y, width, height}]`（坐标已经是截图像素）。之后 `click_ref {"ref": "e42"}` 或 `click {"text": "保存"}` 直接点，不需要自己算坐标；`screenshot {"ref": "e42"}` 还能单独放大某一个元素。
+- **看不清哪个能点就用 `marks: true`**：截图会围上带编号的框，同时返回 `marks: [{id, ref, role, name, x, y, width, height}]`（坐标已经是截图像素）。之后 `click_ref {"ref": "e42"}` 直接点，不需要自己算坐标。
+  - **注意（GNOME Wayland 实测）**：GTK 4 与 Chromium 的窗口**不向 AT-SPI 报告屏幕矩形**，这时画不出框，`marks` 会是空数组，改为返回 `clickable: [{ref, role, name}]`。对这些元素 `click_ref` 走的是无障碍的「点击」动作（不需要坐标）；没有动作的控件只能靠 `screenshot` + 坐标点击。Chrome 更是只暴露 `application` 与 `frame`，网页里的元素请优先用 `browser_*`（DOM）。
 
 ## 已知限制（重要，别踩坑）
 
