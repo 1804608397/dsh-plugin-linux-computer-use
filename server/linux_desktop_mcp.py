@@ -47,7 +47,7 @@ import cu_sys  # noqa: E402
 import cu_unlock  # noqa: E402
 
 SERVER_NAME = "linux-desktop-mcp"
-SERVER_VERSION = "1.6.0"
+SERVER_VERSION = "1.6.1"
 PROTOCOL_VERSION = "2025-06-18"
 SUPPORTED_PROTOCOLS = {"2024-11-05", "2025-03-26", "2025-06-18"}
 LOG_PATH = os.path.join(cu_display.CACHE_DIR, "server.log")
@@ -384,6 +384,8 @@ def tool_screenshot(args: dict) -> dict:
         raise ToolError("scale must be positive (1.0 = one screenshot pixel per logical pixel)")
     monitor_arg = args.get("monitor")
     monitor: dict | str | None = monitor_arg
+    window_arg = args.get("window")
+    window: dict | None = None
     if monitor_arg:
         if region is not None:
             raise ToolError("pass either monitor or region, not both: monitor covers the whole screen, region is a slice of the desktop")
@@ -399,6 +401,27 @@ def tool_screenshot(args: dict) -> dict:
                 monitor = {"connector": connector, "x": item.x, "y": item.y,
                            "width": item.width, "height": item.height}
                 break
+    if window_arg:
+        if region is not None:
+            raise ToolError(
+                "pass either window or region/monitor/ref, not both: window derives the region "
+                "of one window"
+            )
+        if args.get("ref"):
+            raise ToolError("pass either window or ref, not both")
+        match = _resolve_window(str(window_arg), str(args.get("window_app") or ""))
+        rect, source = _window_geometry(match)
+        if rect is None:
+            raise ToolError(
+                f"{match['title'] or match['app']} is a native Wayland surface: neither AT-SPI nor "
+                "X11 publishes its geometry, so it cannot be cropped by name. Capture its monitor "
+                "(screenshot with monitor=...) or act on its elements (ui_find / click with text=..."
+                ")."
+            )
+        region = (rect["x"], rect["y"], rect["width"], rect["height"])
+        if scale is None and max_width == SHOT_MAX_WIDTH and not args.get("max_width"):
+            scale = 1.0
+        window = {"app": match["app"], "title": match["title"], "source": source}
     ref = args.get("ref")
     if ref:
         if region is not None:
@@ -413,6 +436,8 @@ def tool_screenshot(args: dict) -> dict:
     info = capture_shot(max_width, region=region, scale=scale)
     if isinstance(monitor, dict):
         info["monitor"] = monitor
+    if isinstance(window, dict):
+        info["window"] = window
     try:
         with open(info["path"], "rb") as handle:
             payload = handle.read()
@@ -1095,6 +1120,75 @@ def tool_wait_until(args: dict) -> dict:
     }
 
 
+def _window_geometry(match: dict) -> tuple[dict | None, str]:
+    """Best-effort screen rectangle for a window, plus where it came from.
+
+    AT-SPI is asked first because GTK3/Qt/X11 windows publish their toplevel
+    rectangle there. Native Wayland surfaces publish nothing, and X11 cannot see
+    them either, so the caller gets (None, "unknown") and has to work around it.
+    """
+    acc = match.get("acc")
+    if acc is not None:
+        rect = cu_a11y.extents(acc)
+        if rect:
+            return (rect, "atspi")
+    title = match.get("title") or ""
+    if title:
+        rc, out = _xdotool("search", "--name", title)
+        if rc == 0 and out:
+            window_id = out.splitlines()[0].strip()
+            rc2, geometry = _xdotool("getwindowgeometry", "--shell", window_id)
+            if rc2 == 0:
+                values: dict[str, str] = {}
+                for line in geometry.splitlines():
+                    if "=" in line:
+                        key, _, value = line.partition("=")
+                        values[key.strip()] = value.strip()
+                try:
+                    x = int(values["X"])
+                    y = int(values["Y"])
+                    width = int(values["WIDTH"])
+                    height = int(values["HEIGHT"])
+                except (KeyError, ValueError):
+                    pass
+                else:
+                    if width > 0 and height > 0:
+                        return ({"x": x, "y": y, "width": width, "height": height}, "x11")
+    return (None, "unknown")
+
+
+def _resolve_window(title: str, app: str) -> dict:
+    """Match one window or raise a ToolError listing what is open."""
+    match = _match_window(_frame_rows(), title, app)
+    if match is None:
+        raise ToolError(
+            f"no window matches {title or app!r}; call window_list to see the open windows"
+        )
+    return match
+
+
+def tool_window_rect(args: dict) -> dict:
+    title = str(args.get("title") or "").strip()
+    app = str(args.get("app") or "").strip()
+    if not title and not app:
+        raise ToolError("pass title (a window title substring) or app (an application name)")
+    match = _resolve_window(title, app)
+    rect, source = _window_geometry(match)
+    payload: dict = {
+        "window": {"app": match["app"], "title": match["title"], "active": match["active"]},
+        "rect": rect,
+        "source": source,
+    }
+    if rect is None:
+        payload["hint"] = (
+            "this window is a native Wayland surface: neither AT-SPI nor X11 publishes its "
+            "geometry, so it cannot be aimed at by name. Capture the monitor it lives on "
+            "(screenshot with monitor=...) and crop by eye, or act on its elements with "
+            "ui_find / click (text=...)."
+        )
+    return payload
+
+
 def _first_frame_obj(app):
     """The first frame child of an application, or None."""
     if app is None:
@@ -1521,6 +1615,18 @@ TOOLS: list[dict] = [
                         "Takes precedence over max_width."
                     ),
                 },
+                "window": {
+                    "type": "string",
+                    "description": (
+                        "Window title substring (e.g. \"嘉立创\"). Crops to that window's rectangle, "
+                        "which is exact for GTK3/Qt/X11 windows and unavailable for some native "
+                        "Wayland surfaces; conflicts with region/monitor/ref."
+                    ),
+                },
+                "window_app": {
+                    "type": "string",
+                    "description": "Application name, used with window when the title is unknown.",
+                },
                 "monitor": {
                     "type": "string",
                     "description": (
@@ -1893,6 +1999,23 @@ TOOLS: list[dict] = [
         "description": "List application windows with their title and which one looks active.",
         "inputSchema": {"type": "object", "properties": {}},
         "handler": tool_window_list,
+    },
+    {
+        "name": "window_rect",
+        "description": (
+            "Report the on-screen rectangle of one window, so a capture or a click can be aimed "
+            "at it instead of guessed. Ask by title (substring) or app name; call window_list "
+            "first when unsure. GTK3/Qt/X11 windows publish their geometry; some native Wayland "
+            "surfaces (Chrome, GTK4) do not, and then rect is null with a hint on what to do."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "title": {"type": "string", "description": "Case-insensitive substring of the window title."},
+                "app": {"type": "string", "description": "Application name, used when the title is unknown."},
+            },
+        },
+        "handler": tool_window_rect,
     },
     {
         "name": "window_activate",

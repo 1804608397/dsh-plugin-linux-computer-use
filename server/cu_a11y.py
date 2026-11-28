@@ -104,6 +104,11 @@ def _extents(acc) -> dict | None:
     return {"x": int(x), "y": int(y), "width": int(width), "height": int(height)}
 
 
+def extents(acc) -> dict | None:
+    """Public wrapper: the on-screen rectangle of an accessible object."""
+    return _extents(acc)
+
+
 def _actions(acc) -> list[str]:
     try:
         iface = acc.get_action_iface()

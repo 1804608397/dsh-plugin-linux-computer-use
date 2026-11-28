@@ -24,7 +24,7 @@ English summary at the bottom.
 | "注册表"类比 | `gsettings` / dconf |
 | 通知 | `notify-send` |
 | 显示器信息 | Mutter `DisplayConfig`（坐标换算、多屏） |
-| 窗口操作 | `window_list` 列出标题与是否 `active`；`window_activate` 按标题子串把窗口抬到前台——XWayland 走 `xdotool`，原生 Wayland 用 Alt+Tab / Super+Tab 循环并以无障碍树校验（GNOME 下 Alt+Tab 只切本应用窗口，Super+Tab 才切应用），返回里会说明这次用的是哪条路 |
+| 窗口操作 | `window_list` 列出标题与是否 `active`；`window_rect` 给出某个窗口的屏幕矩形（按标题或应用名取，原生 Wayland 窗口会如实返回 `null`）；`window_activate` 按标题子串把窗口抬到前台——XWayland 走 `xdotool`，原生 Wayland 用 Alt+Tab / Super+Tab 循环并以无障碍树校验（GNOME 下 Alt+Tab 只切本应用窗口，Super+Tab 才切应用），返回里会说明这次用的是哪条路 |
 | 等待条件 | `wait_until` 轮询直到满足条件：窗口出现/消失、某个窗口变成前台、某个 UI 节点出现、文件长到指定大小并停止变化（下载完成）、某块区域的像素发生变化（转圈结束、页面加载完）、或用户空闲满多少毫秒；超时返回 `satisfied: false` 与最后一轮观察到的状态，不抛错 |
 
 32 个工具（打开解锁策略后 33 个），分组见 [docs/DETAIL.md](docs/DETAIL.md)。模型调用方式：`mcp__linux__screenshot`、`mcp__linux__click`、`mcp__linux__ui_find` ……

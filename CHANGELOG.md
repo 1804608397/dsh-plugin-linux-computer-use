@@ -1,3 +1,14 @@
+## 0.7.1 - 2026-11-28
+
+- `window_rect` reports the on-screen rectangle of one window (ask by title substring or app
+  name), so a capture or a click can be aimed at a window instead of guessed. AT-SPI supplies
+  the rectangle for GTK3/Qt/X11 windows, `xdotool` for XWayland surfaces, and the answer is an
+  explicit `rect: null` plus a hint for native Wayland surfaces (Chrome, GTK4) that publish
+  nothing.
+- `screenshot` takes `window: "<title substring>"` (+ optional `window_app`) and crops to that
+  window at 1:1, the same way `monitor` names a whole screen.
+- server 1.6.1.
+
 ## 0.6.2 - 2026-11-28
 
 - **A sequence no longer trips its own idle guard.** Injected events reset Mutter's idle timer, so the second step of a `sequence` used to be refused as "the user is at the keyboard (last input 0.0s ago)". Input we injected ourselves is now recognised for 2.5 s.
