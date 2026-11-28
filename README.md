@@ -81,6 +81,9 @@ sudo ./linux-computer-use-prep.sh --verify   # 不需要 sudo
 - **你在用电脑时也不注入**：服务器用 `org.gnome.Mutter.IdleMonitor.GetIdletime` 查空闲时间，最近 60 秒内有键鼠动作就拒绝点击/输入（否则自动化会和你抢光标）。这一条可以放行：工具参数带 `allow_active_input: true`（模型在你明确让它代操作时会带），或设环境变量 `DSH_LINUX_CU_ALLOW_ACTIVE_INPUT=1`；阈值用 `DSH_LINUX_CU_IDLE_GUARD_MS` 调（默认 `60000`）。截图、读 UI 树、读文件不受影响。`desktop_status` 的 `session.idle_ms` 就是当前空闲毫秒数。
 - **原生 Wayland 窗口没法被 X11 抬起**：Chrome、GNOME 自家应用在 `xdotool search` 里完全不存在，`window_activate` 对它们会用 Alt+Tab（本应用内切窗口）与 Super+Tab（切应用）循环，需要 uinput 键盘可用。如果三条路都失败，返回 `activated: false` 与 `tried` 明细，而不是假装成功。
 - **截图要看清小字就用 `region`**：整屏 4480×1440 缩到 1400 宽，11px 的小字会糊成一团；传 `{"region": {"x":120,"y":140,"width":900,"height":620}, "scale":1.0}` 只截那块、按原尺寸返回，既清楚又省 token。`space: "screenshot"` 会自动加回偏移，不用自己算。
+- **多显示器时，先 `display_info` 再裁 `region`**：`region` 用的是**整块桌面**的逻辑坐标（例如 eDP-1 从 `x=2560` 起），不是某一块屏的局部坐标。拿整屏缩略图估坐标很容易把窗口和壁纸搞混（我就干过：截了左屏左上角，还以为计算器是空的）。`display_info` 会给出每个显示器的 `{connector, x, y, width, height, primary}`，照它算。
+- **`click {text}` / `click_ref` 只对"暴露出来且有动作"的控件有效**：`click {text}` 的顺序是「AT-SPI 找元素 → 执行它的 click 动作 → 找不到才退回指针点击」。GTK 4 应用常常**平时不暴露按钮**（GNOME Calculator 的键盘区在 `ui_tree` 里只剩 `frame → panel`，`ui_find` 也找不到，数字键根本点不到），这时它会明确报 `no element whose name or text matches ...`，不会假装成功。先用 `ui_find` 确认元素存在再点。
+- **怎么判断"点击真的生效了"**：别靠截图猜。用客观信号——窗口标题（`window_list`）、面包屑/路径、列表前后差异。实测：`click {text:"Home", app:"Thunar"}` → 标题变 `cheng - Thunar`，再 `click {text:"Open Parent"}` → `home - Thunar`，两次都可用标题核对。
 - 只能工作在**当前登录的图形会话**里；SSH / 无头环境下没有桌面可控制。
 
 ## 安全模型
