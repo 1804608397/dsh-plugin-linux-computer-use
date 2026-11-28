@@ -47,7 +47,7 @@ import cu_sys  # noqa: E402
 import cu_unlock  # noqa: E402
 
 SERVER_NAME = "linux-desktop-mcp"
-SERVER_VERSION = "1.6.1"
+SERVER_VERSION = "1.6.2"
 PROTOCOL_VERSION = "2025-06-18"
 SUPPORTED_PROTOCOLS = {"2024-11-05", "2025-03-26", "2025-06-18"}
 LOG_PATH = os.path.join(cu_display.CACHE_DIR, "server.log")

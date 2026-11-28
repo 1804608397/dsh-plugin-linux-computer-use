@@ -1,3 +1,13 @@
+## 0.7.2 - 2026-11-28
+
+- `window_rect` and `screenshot {window}` now measure only windows that are actually on screen.
+  X11 keeps the geometry of a hidden, minimised or tray-resident window, so the earlier code
+  could crop the desktop where that window used to be; those windows now report `rect: null`
+  with `source: "hidden"` and a hint to raise them first.
+- Verified end to end on XWayland: `window_rect {title: "xclock"}` gave `{x: 86, y: 88, width:
+  348, height: 386}` and `screenshot {window: "xclock"}` returned exactly that window at 1:1.
+- server 1.6.2.
+
 ## 0.7.1 - 2026-11-28
 
 - `window_rect` reports the on-screen rectangle of one window (ask by title substring or app
