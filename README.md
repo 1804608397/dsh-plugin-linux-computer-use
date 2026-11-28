@@ -29,6 +29,8 @@ English summary at the bottom.
 
 32 个工具（打开解锁策略后 33 个），分组见 [docs/DETAIL.md](docs/DETAIL.md)。模型调用方式：`mcp__linux__screenshot`、`mcp__linux__click`、`mcp__linux__ui_find` ……
 
+还没做、已知限制、下一步计划都写在 [docs/ROADMAP.md](docs/ROADMAP.md)（含哪些限制是 Wayland 的锅、哪些会修、哪些短期不修）。
+
 ## 安装
 
 ```bash
