@@ -1136,24 +1136,33 @@ def _window_geometry(match: dict) -> tuple[dict | None, str]:
     if title:
         rc, out = _xdotool("search", "--name", title)
         if rc == 0 and out:
-            window_id = out.splitlines()[0].strip()
-            rc2, geometry = _xdotool("getwindowgeometry", "--shell", window_id)
-            if rc2 == 0:
+            # A title search also matches helper and popup surfaces (Bitwarden has
+            # 10x10 ones), so take the biggest rectangle instead of the first id.
+            best: dict | None = None
+            for window_id in out.splitlines()[:12]:
+                rc2, geometry = _xdotool("getwindowgeometry", "--shell", window_id.strip())
+                if rc2 != 0:
+                    continue
                 values: dict[str, str] = {}
                 for line in geometry.splitlines():
                     if "=" in line:
                         key, _, value = line.partition("=")
                         values[key.strip()] = value.strip()
                 try:
-                    x = int(values["X"])
-                    y = int(values["Y"])
-                    width = int(values["WIDTH"])
-                    height = int(values["HEIGHT"])
+                    rect = {
+                        "x": int(values["X"]),
+                        "y": int(values["Y"]),
+                        "width": int(values["WIDTH"]),
+                        "height": int(values["HEIGHT"]),
+                    }
                 except (KeyError, ValueError):
-                    pass
-                else:
-                    if width > 0 and height > 0:
-                        return ({"x": x, "y": y, "width": width, "height": height}, "x11")
+                    continue
+                if rect["width"] < 50 or rect["height"] < 50:
+                    continue
+                if best is None or rect["width"] * rect["height"] > best["width"] * best["height"]:
+                    best = rect
+            if best is not None:
+                return (best, "x11")
     return (None, "unknown")
 
 
