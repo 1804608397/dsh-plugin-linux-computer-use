@@ -104,7 +104,7 @@ class ValidationTest(unittest.TestCase):
     def test_sequence_reports_the_failing_step(self):
         # A sequence always answers with one entry per step, so the caller can see
         # which step broke; the call itself is flagged as an error when one failed.
-        is_error, payload = self.server.tool(
+        is_error, payload = self.call(
             "sequence", {"steps": [{"op": "screenshot", "args": {"scale": 0}}]}
         )
         self.assertTrue(is_error)
