@@ -5,6 +5,10 @@
 
 ## 1. 下一个版本（0.8）
 
+- [ ] **`watch` 工具（把轮询搬进 server）**：一次调用里连续观察，条件满足才返回，模型侧只有 1 次往返。
+  - 签名草案：`watch {condition, interval_ms=500, timeout_ms=60000, image=false, region?}` → `{satisfied, waited_ms, polls, state, shot?}`
+  - 条件复用现有 `wait_until` 的六种（window / window_active / ui / file / screenshot_changed / idle_at_least），再加一种 `screenshot_stable`（连续两帧哈希相同 = 动画停了）
+  - 与 `wait_until` 的区别：`wait_until` 只观察不截图；`watch` 可以把「最后一帧」一起带回（`image: true`），于是「等页面加载完 → 看一眼 → 动手」变成一次调用
 - [ ] **`ui_tree` 增量缓存**：按 app + 节点路径记住上次的 `ref`，只重扫 `states`/`rect` 变化的子树；目标是 IDE 这类大窗口从 300+ 节点降到几十，重复调用耗时减半。
 - [ ] **`window_activate` 补 `Super+\``**：和 `Alt+Tab` / `Super+Tab` 一样进「无效组合立刻放弃」的循环，覆盖单窗口应用里切换同一应用的多个窗口。
 - [ ] **README 补「隐藏窗口」**：`window_rect` 对最小化/隐藏窗口返回 `null` + `kind: "hidden"`，要让用户一眼看懂，而不是以为坏了。
@@ -39,7 +43,7 @@
 ## 5. 长期方向（按性价比排序）
 
 - [ ] **OCR 兜底**：AT-SPI 拿不到控件时，用截图 + OCR 找文字位置再点；能救 GTK4/Electron/游戏这类硬骨头。
-- [ ] **ScreenCast 持续流**：现在每次截图都新开会话，做「变化检测」很浪费；常开一路流可以做 `wait_until {screenshot_changed}`。
+- [ ] **ScreenCast 持续流（暂缓，用户 2026-11-28 说「之后再说，不一定加」）**：常开一路 PipeWire 流可把变化检测延迟从 ~0.5s 降到 50–100ms，但 GNOME 46 静态画面不重绘、要处理 damage/keyframe、4K 编码吃 CPU，工期 1–2 天。先做 0.8 的 `watch`（把轮询搬进 server），够用就不做这个。
 - [ ] **多模态模型直读截图**：不依赖无障碍树，直接看图和文字，代价是慢和贵。
 - [ ] **跨平台端口**：Windows 用 UIA + SendInput，macOS 用 AXAPI + CGEvent；工具协议不变，只换后端。
 
