@@ -1,3 +1,8 @@
+## 0.6.2 - 2026-11-28
+
+- **A sequence no longer trips its own idle guard.** Injected events reset Mutter's idle timer, so the second step of a `sequence` used to be refused as "the user is at the keyboard (last input 0.0s ago)". Input we injected ourselves is now recognised for 2.5 s.
+- **`click {text}` works on Wayland.** It used to require a screen rectangle, which GTK 4 and Chromium never publish, so every text click answered "no element whose name or text matches". It now falls back to the widget's own click action and reports `via: "accessibility-action"`.
+
 # Changelog
 
 ## 0.6.1 - 2026-11-28

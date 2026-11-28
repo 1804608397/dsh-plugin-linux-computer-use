@@ -109,6 +109,16 @@ def controller(reload_layout: bool = False) -> cu_input.InputController:
     return INPUT
 
 
+# Injected events reset Mutter's idle timer, so a sequence would trip the very
+# guard its own first step triggered. Anything inside this window is our echo.
+SELF_ECHO_S = 2.5
+_LAST_INJECT = {"at": 0.0}
+
+
+def _stamp_injection() -> None:
+    _LAST_INJECT["at"] = time.monotonic()
+
+
 def _guard_input(what: str, args: dict | None = None) -> None:
     """Refuse to inject input while the session is locked or the user is active.
 
@@ -140,11 +150,17 @@ def _guard_input(what: str, args: dict | None = None) -> None:
             )
 
     if os.environ.get("DSH_LINUX_CU_ALLOW_ACTIVE_INPUT") == "1":
+        _stamp_injection()
         return
     if args and args.get("allow_active_input"):
+        _stamp_injection()
         return
     idle = cu_sys.idle_ms()
     if idle is None or idle >= IDLE_GUARD_MS:
+        _stamp_injection()
+        return
+    if (time.monotonic() - _LAST_INJECT["at"]) < SELF_ECHO_S:
+        _stamp_injection()
         return
     raise ToolError(
         f"refusing to {what}: the user is at the keyboard (last input {idle / 1000:.1f}s ago), "
@@ -501,21 +517,45 @@ def tool_click(args: dict) -> dict:
     _guard_input("click", args)
     text = args.get("text")
     if text and args.get("x") is None and args.get("y") is None:
-        hits = [
-            hit for hit in A11Y.find(
-                query=str(text),
-                role=args.get("role"),
-                app=args.get("app"),
-                limit=5,
-            )
-            if hit.get("center")
-        ]
+        hits = A11Y.find(
+            query=str(text),
+            role=args.get("role"),
+            app=args.get("app"),
+            limit=5,
+        )
         if not hits:
             raise ToolError(
                 f"no element whose name or text matches {text!r}; "
                 "try ui_find to see what is there, or click by coordinates"
             )
         best = hits[0]
+        if not best.get("center") and not best.get("rect"):
+            # Wayland toolkits publish no screen rectangle, so the widget's own
+            # action is the only way in.
+            try:
+                done = A11Y.action(best["ref"], "click")
+            except cu_a11y.A11yError:
+                try:
+                    done = A11Y.action(best["ref"], None)
+                except cu_a11y.A11yError as error:
+                    raise ToolError(
+                        f"{text!r} matched {best.get('role')} {best['ref']}, but it has no "
+                        f"on-screen rectangle and no clickable action ({error})"
+                    ) from error
+            return {
+                "clicked": {
+                    "ref": best["ref"],
+                    "role": best.get("role"),
+                    "matched": best.get("name") or str(text)[:60],
+                    "via": "accessibility-action",
+                    "action": (done or {}).get("action"),
+                }
+            }
+        if not best.get("center"):
+            raise ToolError(
+                f"{text!r} matched {best.get('role')} {best['ref']}, which has neither a "
+                "clickable action nor a usable rectangle"
+            )
         button = _button_name(args.get("button", 1))
         count = max(1, min(int(args.get("count", 1)), 3))
         controller().click(best["center"][0], best["center"][1], button=button, count=count)
