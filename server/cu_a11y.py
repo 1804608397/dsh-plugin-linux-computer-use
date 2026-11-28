@@ -413,12 +413,14 @@ class A11y:
         "switch", "tree item", "list item",
     )
 
-    def actionable(self, apps: int = 6, limit: int = 60, timeout_s: float = 5.0) -> list[dict]:
-        """Collect clickable elements with their screen rectangles, in reading order.
+    def actionable(self, apps: int = 25, limit: int = 60, timeout_s: float = 6.0) -> list[dict]:
+        """Collect clickable elements in reading order.
 
-        Walks breadth first so that a control near the top of the screen wins over
-        an identical one far below, and skips anything outside the desktop or too
-        small to hit.
+        A node qualifies when its role is interactive or it exposes an action.
+        On Wayland most toolkits publish no screen rectangle, so the rectangle is
+        optional: when it is missing the node is still reported, and callers are
+        expected to drive it through its accessibility action instead of a
+        synthetic pointer click.
         """
         self.start()
         deadline = time.monotonic() + timeout_s
@@ -428,7 +430,7 @@ class A11y:
             if target is not None:
                 queue.append(target)
         found: list[dict] = []
-        seen_boxes: set[tuple[int, int, int, int]] = set()
+        seen: set[tuple] = set()
         visited = 0
         while queue and len(found) < limit and time.monotonic() < deadline and visited < 4000:
             acc = queue.pop(0)
@@ -445,13 +447,20 @@ class A11y:
             worth = role_name in self.ACTIONABLE_ROLES or any(
                 word in act for act in acts for word in ("press", "click", "activate"))
             rect = _extents(acc)
-            if worth and rect and rect["width"] >= 8 and rect["height"] >= 8:
-                key = (rect["x"], rect["y"], rect["width"], rect["height"])
-                if key not in seen_boxes:
-                    seen_boxes.add(key)
-                    entry = {"ref": self._ref(acc), "role": role_name, "rect": rect}
+            if rect is not None and (rect["width"] < 8 or rect["height"] < 8):
+                rect = None
+            if worth:
+                key = ("box", rect["x"], rect["y"], rect["width"], rect["height"]) if rect else (
+                    "node", role_name, name[:80])
+                if key not in seen:
+                    seen.add(key)
+                    entry = {"ref": self._ref(acc), "role": role_name}
                     if name:
                         entry["name"] = name[:80]
+                    if rect:
+                        entry["rect"] = rect
+                    if acts:
+                        entry["actions"] = acts[:4]
                     found.append(entry)
             try:
                 for index in range(min(acc.get_child_count(), 200)):
@@ -460,7 +469,8 @@ class A11y:
                         queue.append(child)
             except Exception:  # noqa: BLE001
                 continue
-        found.sort(key=lambda item: (item["rect"]["y"], item["rect"]["x"]))
+        found.sort(key=lambda item: (
+            (0, item["rect"]["y"], item["rect"]["x"]) if item.get("rect") else (1, 0, 0)))
         return found
 
     def describe_object(self, acc, name: str | None = None, role_name: str | None = None) -> dict:

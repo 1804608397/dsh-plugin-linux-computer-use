@@ -399,10 +399,27 @@ def tool_screenshot(args: dict) -> dict:
                 "click_ref({ref}) or by the coordinates listed in \"marks\" (screenshot space)."
             )
         else:
-            note += (
-                " No clickable element was found in this area"
-                " (a locked session hides most of the tree), so no boxes were drawn."
-            )
+            # Wayland apps often publish no screen rectangles, so nothing can be
+            # boxed; a list of refs is still useful because click_ref can act on them.
+            try:
+                clickable = [
+                    {k: node[k] for k in ("ref", "role", "name", "actions") if k in node}
+                    for node in A11Y.actionable(limit=max(1, min(int(args.get("marks_limit", 40)), 40)))
+                ]
+            except cu_a11y.A11yError:
+                clickable = []
+            info["clickable"] = clickable
+            if clickable:
+                note += (
+                    f" No boxes were drawn because these windows publish no screen rectangles on"
+                    f" Wayland, but {len(clickable)} clickable elements were found: pick a ref from"
+                    " \"clickable\" and pass it to click_ref."
+                )
+            else:
+                note += (
+                    " No clickable element was found in this area"
+                    " (a locked session hides most of the tree), so no boxes were drawn."
+                )
     return {
         "content": [
             {"type": "image", "data": encoded, "mimeType": "image/png"},
@@ -522,6 +539,12 @@ def tool_click(args: dict) -> dict:
 
 
 def tool_click_ref(args: dict) -> dict:
+    """Click an accessibility node.
+
+    Wayland apps rarely publish global screen rectangles, so a pointer click is not
+    always possible: try the widget's own click action first and fall back to the
+    pointer when the node does have a rectangle.
+    """
     _guard_input("click", args)
     ref = str(_require(args, "ref"))
     node = A11Y.describe(ref)
@@ -529,10 +552,38 @@ def tool_click_ref(args: dict) -> dict:
     rect = node.get("rect")
     if not center and rect:
         center = [rect["x"] + rect["width"] // 2, rect["y"] + rect["height"] // 2]
-    if not center:
-        raise ToolError(f"element {ref} has no on-screen rectangle, so it cannot be clicked")
     button = _button_name(args.get("button", 1))
     count = max(1, min(int(args.get("count", 1)), 3))
+    prefer = args.get("via", "auto")
+    failures: list[str] = []
+
+    if prefer in ("auto", "action"):
+        try:
+            done = A11Y.action(ref, "click")
+        except cu_a11y.A11yError:
+            try:
+                done = A11Y.action(ref, None)
+            except cu_a11y.A11yError as error:
+                done = None
+                failures.append(str(error))
+        if done is not None:
+            return {
+                "clicked": {
+                    "ref": ref,
+                    "role": node.get("role"),
+                    "name": node.get("name", ""),
+                    "via": "accessibility-action",
+                    "action": done.get("action"),
+                    "button": button,
+                    "count": count,
+                }
+            }
+
+    if not center:
+        detail = f"element {ref} has no on-screen rectangle"
+        if failures:
+            detail = f"{detail} and no clickable action ({'; '.join(failures)})"
+        raise ToolError(f"{detail}, so it cannot be clicked")
     controller().click(center[0], center[1], button=button, count=count)
     return {
         "clicked": {
@@ -543,6 +594,7 @@ def tool_click_ref(args: dict) -> dict:
             "ref": ref,
             "role": node.get("role"),
             "name": node.get("name", ""),
+            "via": "pointer",
         }
     }
 

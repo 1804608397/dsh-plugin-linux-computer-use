@@ -7,6 +7,14 @@
   `password_stored: null` with an `error` line instead of a 20 second hang.
 - Same guard on `unlock_screen`: it now says the keyring is locked instead of
   blocking the whole tool call.
+- **Wayland apps publish no screen rectangles.** GTK 4 and Chromium report empty
+  AT-SPI extents, so `marks: true` can draw no numbered boxes and `click_ref`
+  cannot compute a centre point. `marks: true` now answers with a `clickable`
+  list of `{ref, role, name}` instead of pretending nothing is on screen, and
+  `click_ref` drives elements through their accessibility action first (which
+  works without coordinates), falling back to a pointer click only when a
+  rectangle exists. `actionable()` also scans 25 applications instead of 6, so
+  the list is no longer empty when the interesting window is late in the list.
 - server 1.5.1.
 
 ## 0.6.0 - 2026-11-28
