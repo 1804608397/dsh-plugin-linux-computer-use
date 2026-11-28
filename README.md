@@ -72,6 +72,17 @@ sudo ./linux-computer-use-prep.sh --verify   # 不需要 sudo
 - **看不清哪个能点就用 `marks: true`**：截图会围上带编号的框，同时返回 `marks: [{id, ref, role, name, x, y, width, height}]`（坐标已经是截图像素）。之后 `click_ref {"ref": "e42"}` 直接点，不需要自己算坐标。
   - **注意（GNOME Wayland 实测）**：GTK 4 与 Chromium 的窗口**不向 AT-SPI 报告屏幕矩形**，这时画不出框，`marks` 会是空数组，改为返回 `clickable: [{ref, role, name}]`。对这些元素 `click_ref` 走的是无障碍的「点击」动作（不需要坐标）；没有动作的控件只能靠 `screenshot` + 坐标点击。Chrome 更是只暴露 `application` 与 `frame`，网页里的元素请优先用 `browser_*`（DOM）。
 
+## 测试
+
+```bash
+cd dsh-bundle-linux-computer-use
+python3 -m unittest discover -s tests -p "test_*.py" -v
+```
+
+29 个用例，覆盖三件事：**工具面**（33 个工具的名字、每个工具的 schema、注入类工具必须带 `allow_active_input`）、**参数校验的报错文案**（无效 region/scale/monitor/condition 要给下一步提示）、以及**纯逻辑**（`_window_geometry` 的四种 xdotool 情形、`_parse_region`、`screenshot` 像素↔逻辑坐标换算）。不需要图形会话、不需要 `/dev/uinput`，所以 GitHub Actions 上直接跑（见的 `.github/workflows/tests.yml`）。
+
+测试驱动的是**真实的 stdio server**，不是 mock：起一个子进程、发 JSON-RPC、读回应，跟 DSH 接进来时走的是同一条路。
+
 ## 已知限制（重要，别踩坑）
 
 - **Chromium / Electron / Qt 应用（Chrome、VS Code、微信、WPS、Bitwarden）暴露的 UI 树是空的**——这是平台事实，不是 bug。它们只能靠"截屏 + 坐标点击"，窗口一动就得重新截图。原生 GTK 应用用 `ui_find` + `ui_action` 很稳。

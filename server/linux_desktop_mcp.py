@@ -378,8 +378,10 @@ def _draw_marks(info: dict, limit: int) -> list[dict]:
 def tool_screenshot(args: dict) -> dict:
     max_width = int(args.get("max_width", SHOT_MAX_WIDTH))
     region = _parse_region(args.get("region"))
-    scale = args.get("scale")
-    scale = float(scale) if scale else None
+    scale_value = args.get("scale")
+    # 0 is a falsy number, so test for None explicitly: scale=0 must be rejected
+    # rather than silently ignored.
+    scale = float(scale_value) if scale_value is not None else None
     if scale is not None and scale <= 0:
         raise ToolError("scale must be positive (1.0 = one screenshot pixel per logical pixel)")
     monitor_arg = args.get("monitor")
