@@ -1134,7 +1134,11 @@ def _window_geometry(match: dict) -> tuple[dict | None, str]:
             return (rect, "atspi")
     title = match.get("title") or ""
     if title:
-        rc, out = _xdotool("search", "--name", title)
+        # A hidden or minimised window keeps its geometry in X11, so ask for the
+        # visible ones first and only then fall back to the full list.
+        rc, out = _xdotool("search", "--onlyvisible", "--name", title)
+        if rc != 0 or not out:
+            rc, out = _xdotool("search", "--name", title)
         if rc == 0 and out:
             # A title search also matches helper and popup surfaces (Bitwarden has
             # 10x10 ones), so take the biggest rectangle instead of the first id.
